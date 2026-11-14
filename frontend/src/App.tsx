@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api } from './api';
+import { previewConsume, previewVote, withOptimisticSnacks } from './optimistic';
 import type { Activity, Category, Snack, SnackPage, StockStatus, Summary, User } from './types';
 
 type View = 'pantry' | 'activity';
@@ -156,13 +157,13 @@ function Metric({ caption, value, kind, tone }: { caption: string; value: number
 }
 
 function SnackCard({ snack, admin, busy, onDialog, onVote }: { snack: Snack; admin: boolean; busy: boolean; onDialog: (d: Dialog) => void; onVote: (s: Snack) => void }) {
-  return <div className={`snack-card ${snack.status === 'gone' ? 'snack-out' : ''}`}>
+  return <div className={`snack-card ${snack.status === 'gone' ? 'snack-out' : ''}`} aria-busy={busy}>
     <div className="snack-card-main"><div className={`snack-emoji emoji-${snack.category.replace('-', '')}`}>{emoji[snack.category]}</div>
       <div className="snack-name-group"><h3 title={snack.name}>{snack.name}</h3><span className="category">{snack.category}</span></div>
       <div className="stock-column"><strong>{snack.quantity} <small>left</small></strong>{stockLabel(snack.status)}</div>
       <div className="vote-column"><button type="button" disabled={busy} aria-label={snack.has_voted ? `Remove vote for ${snack.name}` : `Vote for ${snack.name}`} className={`vote-btn ${snack.has_voted ? 'voted' : ''}`} onClick={() => onVote(snack)}>{snack.has_voted ? '♥' : '♡'} <span>{snack.votes}</span></button><small>votes</small></div>
     </div>
-    <div className="snack-card-actions"><span className="stock-hint">{snack.status === 'gone' ? 'Gone for now. Come back soon!' : snack.status === 'running_low' ? '⚡ Going fast — grab yours!' : '✓ All stocked up'}</span>
+    <div className="snack-card-actions"><span className="stock-hint">{busy ? '↻ Syncing with pantry…' : snack.status === 'gone' ? 'Gone for now. Come back soon!' : snack.status === 'running_low' ? '⚡ Going fast — grab yours!' : '✓ All stocked up'}</span>
       <div className="action-buttons"><button type="button" className="consume-button" disabled={busy || snack.quantity === 0} onClick={() => onDialog({ kind: 'consume', snack })}>− &nbsp; Consume</button>
       {admin && <><button type="button" className="action-restock" disabled={busy} onClick={() => onDialog({ kind: 'restock', snack })}>+ &nbsp; Restock</button><button title={`Edit ${snack.name}`} aria-label={`Edit ${snack.name}`} className="icon-btn" disabled={busy} onClick={() => onDialog({ kind: 'edit', snack })}>✎</button><button title={`Delete ${snack.name}`} aria-label={`Delete ${snack.name}`} className="icon-btn icon-danger" disabled={busy} onClick={() => onDialog({ kind: 'delete', snack })}>×</button></>}
       </div>
@@ -201,6 +202,11 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
   const [dialog, setDialog] = useState<Dialog>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
+  // Pending previews are overlays, not changes to the server's cached data.
+  // This keeps rollback correct even if an unrelated reload finishes mid-flight.
+  const [optimisticSnacks, setOptimisticSnacks] = useState<ReadonlyMap<number, Snack>>(() => new Map());
+  const pendingIds = useRef<Set<number>>(new Set());
+  const displayedSnacks = useMemo(() => withOptimisticSnacks(snacks, optimisticSnacks), [snacks, optimisticSnacks]);
   const requestSeq = useRef(0);
 
   // Every success and error toast disappears automatically after four seconds.
@@ -236,6 +242,49 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
     try { await action(); setNotice({ kind: 'success', message: success }); await reload(); }
     catch (err) { setNotice({ kind: 'error', message: messageOf(err) }); await reload(); throw err; }
   }
+
+  /** Instantly show one vote/consume change; settle it using the API response.
+   * The server is authoritative: on failure we remove the preview and re-fetch.
+   * A per-snack in-flight guard prevents conflicting clicks on the same item.
+   */
+  async function optimisticAction(
+    id: number,
+    preview: Snack,
+    action: () => Promise<Snack>,
+    success: string,
+  ): Promise<void> {
+    if (pendingIds.current.has(id)) throw new Error('This snack is already being updated.');
+    pendingIds.current.add(id);
+    setBusyIds(new Set(pendingIds.current));
+    setOptimisticSnacks(previous => new Map(previous).set(id, preview));
+
+    let accepted = false;
+    try {
+      const confirmed = await action();
+      accepted = true;
+      // Preserve the confirmed server result if the follow-up GET fails.
+      setSnacks(current => current ? {
+        ...current,
+        items: current.items.map(snack => snack.id === id ? confirmed : snack),
+      } : current);
+      setNotice({ kind: 'success', message: success });
+      await reload(); // Reconcile filters, sorting, summary and current page.
+    } catch (err) {
+      setNotice({ kind: 'error', message: messageOf(err) });
+      throw err;
+    } finally {
+      // Removing only this preview restores the latest server snapshot.
+      setOptimisticSnacks(previous => {
+        const next = new Map(previous);
+        next.delete(id);
+        return next;
+      });
+      pendingIds.current.delete(id);
+      setBusyIds(new Set(pendingIds.current));
+      if (!accepted) void reload(); // Refresh after a rejected/ambiguous request.
+    }
+  }
+
   async function save(d: NonNullable<Dialog>, value?: SnackForm | number, requestKey?: string) {
     switch (d.kind) {
       case 'add': await mutate(() => api.create(token, value as SnackForm), 'New snack added successfully.'); break;
@@ -243,16 +292,25 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
         const { name, category, low_stock_threshold } = value as SnackForm;
         await mutate(() => api.edit(token, d.snack.id, { name, category, low_stock_threshold }), 'Snack details updated.'); break;
       }
-      case 'consume': await mutate(() => api.consume(token, d.snack.id, value as number, requestKey!), 'Enjoy your snack! Inventory updated.'); break;
+      case 'consume': await optimisticAction(
+        d.snack.id,
+        previewConsume(d.snack, value as number),
+        () => api.consume(token, d.snack.id, value as number, requestKey!),
+        'Enjoy your snack! Inventory updated.',
+      ); break;
       case 'restock': await mutate(() => api.restock(token, d.snack.id, value as number), 'Pantry restocked successfully.'); break;
       case 'delete': await mutate(() => api.delete(token, d.snack.id), 'Snack removed from the pantry.'); break;
     }
   }
   async function vote(snack: Snack) {
-    setBusyIds(current => new Set(current).add(snack.id));
-    try { await mutate(() => snack.has_voted ? api.unvote(token, snack.id) : api.vote(token, snack.id), snack.has_voted ? 'Vote removed.' : 'Your vote has been counted!'); }
-    catch { /* Server message is already displayed in notice. */ }
-    finally { setBusyIds(current => { const next = new Set(current); next.delete(snack.id); return next; }); }
+    try {
+      await optimisticAction(
+        snack.id,
+        previewVote(snack),
+        () => snack.has_voted ? api.unvote(token, snack.id) : api.vote(token, snack.id),
+        snack.has_voted ? 'Vote removed.' : 'Your vote has been counted!',
+      );
+    } catch { /* Error notification and rollback handled by optimisticAction. */ }
   }
   return <div className="app-shell">
     <aside className="sidebar"><div className="sidebar-brand"><div className="brand-logo">bpf<span>.</span></div><span className="brand-description">SNACK OVERFLOW</span></div>
@@ -271,10 +329,10 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
         <div className="welcome-row"><div><p className="eyebrow">WELCOME TO THE PANTRY 👋</p><h1>Hey, {user.name.split(' ')[0]}<span className="period">.</span> Hungry?</h1><p className="muted">Here's what's happening in the office pantry today.</p></div>{isAdmin && <button className="primary add-button" onClick={() => setDialog({ kind: 'add' })}>+ &nbsp; Add a snack</button>}</div>
         <section className="summary-metrics" aria-label="Pantry summary"><Metric caption="Total snacks" value={summary?.total ?? 0} kind="total" tone="blue"/><Metric caption="In stock" value={summary?.stocked ?? 0} kind="box" tone="green"/><Metric caption="Running low" value={summary?.running_low ?? 0} kind="low" tone="amber"/><Metric caption="Out of stock" value={summary?.gone ?? 0} kind="gone" tone="red"/></section>
         <div className="feature-strip"><div className="feature-medal">🏆</div><div><span className="feature-kicker">THE PEOPLE HAVE SPOKEN</span><h2>Snack of the week</h2><p>{summary?.snack_of_the_week ? <>Our current favourite: <strong>{emoji[summary.snack_of_the_week.category]} {summary.snack_of_the_week.name}</strong></> : 'Be the first to vote for a snack this week!'}</p></div><div className="feature-right"><span>★</span><strong>{summary?.snack_of_the_week?.votes_this_week ?? 0}</strong><small>votes this week</small></div></div>
-        <section className="pantry-section"><div className="section-heading"><div><p className="eyebrow">THE GOOD STUFF</p><h2>Explore the pantry <span className="heading-count">{snacks?.total ?? '—'}</span></h2><p className="muted">Find a favourite, grab a bite, or vote for the next office champion.</p></div><button className="refresh-button" disabled={loading} onClick={() => void reload()} aria-label="Refresh pantry">↻ &nbsp; Refresh</button></div>
+        <section className="pantry-section"><div className="section-heading"><div><p className="eyebrow">THE GOOD STUFF</p><h2>Explore the pantry <span className="heading-count">{displayedSnacks?.total ?? '—'}</span></h2><p className="muted">Find a favourite, grab a bite, or vote for the next office champion.</p></div><button className="refresh-button" disabled={loading} onClick={() => void reload()} aria-label="Refresh pantry">↻ &nbsp; Refresh</button></div>
           <div className="filters"><div className="search-wrap"><span aria-hidden="true">⌕</span><input type="search" placeholder="Search for your next snack…" aria-label="Search snacks" value={query} onChange={e => setQuery(e.target.value)} /></div><select aria-label="Filter category" value={category} onChange={e => setCategory(e.target.value as Category | 'all')}><option value="all">All categories</option><option value="sweet">Sweet</option><option value="savoury">Savoury</option><option value="drink">Drinks</option><option value="healthy-ish">Healthy-ish</option></select><select aria-label="Sort snacks" value={sort} onChange={e => setSort(e.target.value)}><option value="name:asc">Name A–Z</option><option value="name:desc">Name Z–A</option><option value="quantity:asc">Stock: low first</option><option value="quantity:desc">Stock: high first</option><option value="votes:desc">Most popular</option></select></div>
           <div className="filter-tabs" role="group" aria-label="Stock status filter">{([['all', 'All snacks'], ['stocked', 'In stock'], ['running_low', 'Running low'], ['gone', 'Out of stock']] as const).map(([key, text]) => <button key={key} type="button" className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)}>{text}{key === 'running_low' && !!summary?.running_low && <span>{summary.running_low}</span>}{key === 'gone' && !!summary?.gone && <span>{summary.gone}</span>}</button>)}</div>
-          {loadError ? <div className="state-card error-state">⚠ {loadError}<button className="secondary" onClick={() => void reload()}>Retry</button></div> : loading && !snacks ? <div className="state-card">Fetching fresh snacks…</div> : !snacks?.items.length && !loading ? <div className="state-card"><span className="state-emoji">🍪</span><h3>No snacks found</h3><p>Try changing the filters or searching for something else.</p><button className="secondary" onClick={() => { setFilter('all'); setCategory('all'); setQuery(''); }}>Clear filters</button></div> : <div className={`snack-list ${loading ? 'updating' : ''}`}>{snacks?.items.map(snack => <SnackCard key={snack.id} snack={snack} admin={isAdmin} busy={busyIds.has(snack.id)} onDialog={setDialog} onVote={s => void vote(s)} />)}</div>}
+          {loadError ? <div className="state-card error-state">⚠ {loadError}<button className="secondary" onClick={() => void reload()}>Retry</button></div> : loading && !snacks ? <div className="state-card">Fetching fresh snacks…</div> : !displayedSnacks?.items.length && !loading ? <div className="state-card"><span className="state-emoji">🍪</span><h3>No snacks found</h3><p>Try changing the filters or searching for something else.</p><button className="secondary" onClick={() => { setFilter('all'); setCategory('all'); setQuery(''); }}>Clear filters</button></div> : <div className={`snack-list ${loading ? 'updating' : ''}`}>{displayedSnacks?.items.map(snack => <SnackCard key={snack.id} snack={snack} admin={isAdmin} busy={busyIds.has(snack.id)} onDialog={setDialog} onVote={s => void vote(s)} />)}</div>}
           <div className="pagination"><span>{snacks ? `${snacks.total} snack${snacks.total === 1 ? '' : 's'} found` : 'Loading…'}</span><div><button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || loading}>← Previous</button><span>{snacks?.pages ? `${page} / ${snacks.pages}` : '0 / 0'}</span><button onClick={() => setPage(p => p + 1)} disabled={loading || page >= (snacks?.pages ?? 0)}>Next →</button></div></div>
         </section>
       </>}</main><footer className="app-footer"><span>✦ Crafted with care for the hungriest office.</span><span>Bipolar Factory · Full Stack Intern Challenge 2026</span></footer>

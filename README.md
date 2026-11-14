@@ -82,7 +82,7 @@ Open http://localhost:5173. The Vite dev server proxies `/api` to port `8000`; t
 | Error states | Consistent `{ "error": { "code", "message" } }` and validation details |
 | Tests | HTTP contract tests, 10-worker race, rollback test; optional real PostgreSQL race in CI |
 | Responsive UI | CSS grid cards, mobile-friendly filters, modal forms, feedback and empty states |
-| Optional features | Server-side sorting, admin activity page, Docker Compose, GitHub Actions CI |
+| Optional features | Server-side sorting, member sign-up, admin activity page, Docker Compose, idempotency, optimistic Vote/Consume, GitHub Actions CI |
 
 ## 🧱 Architecture
 
@@ -334,9 +334,20 @@ This standard-library-only script creates a disposable snack with three packets,
 - Hot snack rows experience increased row-lock contention. The conditional UPDATE remains correct, but latency rises on very popular snacks. Measure conflict rates, DB lock waits, p95 latency, and consider a queue for extremely hot items if product requirements justify it.
 - A single small PostgreSQL instance becomes the capacity bottleneck. Scale reads where appropriate, handle migrations, centralize metrics/tracing, add backups, and use managed database resources.
 
-**Why keep other bonuses limited?** The assignment says depth beats breadth. The central proof is *3 successes, 7 conflicts, 0 negative inventory, 3 audit entries* under a real database race. Member sign-up and consume idempotency were added only after the atomic inventory, vote uniqueness, authentication, and CI checks were working. Live updates and cosmetic animations would not improve those invariants.
+**Why keep other bonuses limited?** The assignment says depth beats breadth. The central proof is *3 successes, 7 conflicts, 0 negative inventory, 3 audit entries* under a real database race. Member sign-up, consume idempotency and optimistic previews were added only after the atomic inventory, vote uniqueness, authentication, and CI checks were working. Live updates and cosmetic animations would not improve those invariants.
 
 For the implementation steps and demo script, see [`docs/IDEMPOTENCY_BONUS_GUIDE.md`](docs/IDEMPOTENCY_BONUS_GUIDE.md).
+
+### Optimistic frontend updates (bonus)
+
+Vote/Unvote and Consume update the **visible snack card immediately** without waiting for the network response. `frontend/src/optimistic.ts` supplies pure, non-mutating previews; `Dashboard` holds per-snack overlays on top of the last confirmed API page. The affected card is temporarily locked while the request is pending, preventing overlapping vote/consume operations on the same snack.
+
+- **Success:** The API response becomes the confirmed cached snack; the UI re-fetches the page and summary to reconcile server-side sort, filters, stock statuses, and Snack of the Week. The preview is then removed.
+- **Failure/409/offline:** The preview is removed (rollback to the latest available server snapshot), an error notification is shown, and the list is re-fetched. The server remains authoritative; no optimistic state is written to PostgreSQL.
+- **Stale reads:** Keeping previews in separate overlays stops unrelated in-flight GET requests from overwriting the temporary display or causing a stale-snapshot rollback.
+- **Consume retries:** The dialog retains the same `Idempotency-Key` for retries of the same amount; changing the amount gets a new key, so the server still protects against double-consumption.
+
+The summary cards and weekly leader remain server-authoritative and refresh **after confirmation**; we intentionally do not fabricate those aggregated totals during a pending request. This implementation does not include WebSockets/SSE or background synchronization between tabs. Run the standalone projection tests with **Node.js 22+**: `cd frontend && npm run test:optimistic`. See [`docs/OPTIMISTIC_UI_GUIDE.md`](docs/OPTIMISTIC_UI_GUIDE.md) for manual failure/rollback verification.
 
 ## 📂 Project structure
 
@@ -349,8 +360,10 @@ snack-overflow/
 │   ├── src/
 │   │   ├── App.tsx          # Login, dashboard, role-aware controls, activity, dialogs
 │   │   ├── api.ts           # Typed API client and unified errors
+│   │   ├── optimistic.ts    # Optimistic stock/vote previews and rollback overlays
 │   │   ├── types.ts         # API response and input types
 │   │   └── styles.css       # Responsive styling
+│   ├── tests/optimistic.test.mjs  # Four UI projection tests (Node.js 22+)
 │   ├── Dockerfile
 │   ├── nginx.conf           # Proxy /api to FastAPI
 │   └── package.json
@@ -378,7 +391,8 @@ snack-overflow/
 └── docs/
     ├── DEMO_AND_SUBMISSION.md
     ├── SIGNUP_BONUS_GUIDE.md
-    └── IDEMPOTENCY_BONUS_GUIDE.md
+    ├── IDEMPOTENCY_BONUS_GUIDE.md
+    └── OPTIMISTIC_UI_GUIDE.md
 ```
 
 ## ✉️ Submission
