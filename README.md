@@ -11,7 +11,7 @@ Snack Overflow helps a team discover snacks, vote for favourites, consume packet
 Prerequisites: [Docker Desktop](https://docs.docker.com/desktop/) with the Compose plugin installed, and Git.
 
 ```bash
-git clone <YOUR_PUBLIC_REPO_URL>
+git clone https://github.com/umarakeel04/snack-overflow.git
 cd snack-overflow
 cp .env.example .env            # Windows PowerShell: Copy-Item .env.example .env
 docker compose up --build
