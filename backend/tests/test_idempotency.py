@@ -117,7 +117,7 @@ def test_ten_identical_keys_execute_only_once_in_postgresql():
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     suffix = uuid.uuid4().hex[:12]
     with factory() as db:
-        user = User(name='Idem Runner', email=f'idem-{suffix}@example.test',
+        user = User(name='Idem Runner', email=f'idem-{suffix}@example.com',
                     password_hash=hash_password('Password123!'), role='member')
         snack = Snack(name=f'Idem Race {suffix}', category='savoury', quantity=3, low_stock_threshold=5)
         db.add_all([user, snack]); db.commit()
