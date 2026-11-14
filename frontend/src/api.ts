@@ -37,6 +37,10 @@ export const api = {
     request<{ token: string; user: User }>('/auth/login', null, {
       method: 'POST', body: JSON.stringify({ email, password }),
     }),
+  register: (name: string, email: string, password: string) =>
+    request<{ token: string; user: User }>('/auth/register', null, {
+      method: 'POST', body: JSON.stringify({ name, email, password }),
+    }),
   me: (token: string) => request<User>('/auth/me', token),
   logout: (token: string) => request<void>('/auth/logout', token, { method: 'POST' }),
   snacks: (token: string, params: URLSearchParams) => request<SnackPage>(`/snacks?${params.toString()}`, token),

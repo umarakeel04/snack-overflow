@@ -53,6 +53,11 @@ input::placeholder { color: #a4aeb9; }
 .demo-box { background: #f9fafc; border: 1px solid #eef0f3; border-radius: 14px; padding: 19px; margin-top: 27px; }
 .demo-box strong { font-size: .89rem; color: #39445c; }.demo-box p { font-size: .77rem; margin: 5px 0 14px; color: #929cad; }
 .demo-actions { display: flex; gap: 10px; }.demo-actions button { flex: 1; background: #fff; color: #454d62; border: 1px solid #e0e4ec; border-radius: 9px; padding: 10px; font-size: .85rem; font-weight: 750; }.demo-actions button:hover { border-color: #e98374; color: #db7263; }
+.register-hint { font-size: .72rem; line-height: 1.5; margin: 7px 0 0; color: #8490a1; }
+.auth-switch { text-align: center; font-size: .81rem; margin: 19px 0 0; color: #8290a0; }
+.auth-switch button { color: #d86857; background: transparent; border: none; font-weight: 800; padding: 4px; text-decoration: underline; text-underline-offset: 3px; }
+.auth-switch button:hover:not(:disabled) { color: #a64c41; }
+.auth-switch button:focus-visible { outline: 3px solid #e79f8d; outline-offset: 2px; border-radius: 4px; }
 .login-footer { margin-top: 32px; color: #b0b7c2; font-size: .7rem; text-align: center; }
 /* App layout */
 .app-shell { display: flex; min-height: 100vh; }

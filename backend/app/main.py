@@ -14,9 +14,9 @@ from .database import get_db
 from .models import Activity, LoginSession, Snack, User, Vote, utcnow
 from .schemas import (
     ActivityOut, ActivityPage, AmountIn, Category, Credentials, LoginOut,
-    SnackCreate, SnackOut, SnackPage, SnackPatch, Status, SummaryOut, UserOut, WinnerOut,
+    SnackCreate, SnackOut, SnackPage, SnackPatch, Status, SummaryOut, UserOut, WinnerOut, RegistrationIn,
 )
-from .security import admin_only, create_session, current_user, token_digest, verify_password
+from .security import admin_only, create_session, current_user, hash_password, token_digest, verify_password
 from .services import InventoryFailure, consume_stock, restock
 
 log = logging.getLogger(__name__)
@@ -73,6 +73,23 @@ def login(body: Credentials, db: Session = Depends(get_db)):
     if not user or not verify_password(body.password, user.password_hash):
         fail(401, "INVALID_CREDENTIALS", "Invalid email or password")
     return LoginOut(token=create_session(db, user.id), user=UserOut.model_validate(user))
+
+
+@app.post("/auth/register", response_model=LoginOut, status_code=201)
+def register(body: RegistrationIn, db: Session = Depends(get_db)):
+    """Create a member only. Email uniqueness is enforced by the database."""
+    user = User(name=body.name, email=str(body.email).lower(),
+                password_hash=hash_password(body.password), role="member")
+    db.add(user)
+    try:
+        # Flush obtains the new user ID and checks uniqueness without committing.
+        db.flush()
+        # create_session commits both the user and their initial session together.
+        token = create_session(db, user.id)
+    except IntegrityError:
+        db.rollback()
+        fail(409, "EMAIL_ALREADY_REGISTERED", "This email address is already registered. Please sign in.")
+    return LoginOut(token=token, user=UserOut.model_validate(user))
 
 
 @app.post("/auth/logout", status_code=204)

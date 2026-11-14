@@ -13,6 +13,29 @@ class Credentials(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class RegistrationIn(BaseModel):
+    """Public registration; role is deliberately not accepted from the client."""
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        name = value.strip()
+        if len(name) < 2 or any(ord(char) < 32 or ord(char) == 127 for char in name):
+            raise ValueError("Name must contain at least two visible characters")
+        return name
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, password: str) -> str:
+        if not any(char.isalpha() for char in password) or not any(char.isdigit() for char in password):
+            raise ValueError("Password must include at least one letter and one number")
+        return password
+
+
 class UserOut(BaseModel):
     id: int
     name: str

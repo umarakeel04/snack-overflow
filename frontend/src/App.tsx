@@ -20,18 +20,44 @@ function markIcon(kind: string) {
 }
 
 function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('member@snackoverflow.dev');
   const [password, setPassword] = useState('Member123!');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const registering = mode === 'register';
+
+  function changeMode(next: 'login' | 'register') {
+    setMode(next);
+    setError('');
+    setName('');
+    setEmail(next === 'login' ? 'member@snackoverflow.dev' : '');
+    setPassword(next === 'login' ? 'Member123!' : '');
+    setConfirmPassword('');
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    if (registering && password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
     setLoading(true);
-    try { const data = await api.login(email, password); onLogin(data.token, data.user); }
-    catch (err) { setError(messageOf(err)); }
-    finally { setLoading(false); }
+    try {
+      const data = registering
+        ? await api.register(name.trim(), email.trim(), password)
+        : await api.login(email.trim(), password);
+      onLogin(data.token, data.user);
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setLoading(false);
+    }
   }
+
   return <div className="login-page">
     <div className="login-art">
       <div className="logo-brand"><span className="brand-dot">bpf<span>.</span></span><span className="brand-rule"/> OFFICE PANTRY</div>
@@ -45,20 +71,32 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
     </div>
     <div className="login-side"><div className="login-box">
       <div className="mobile-brand">bpf<span>.</span></div>
-      <div className="login-badge">🍿 &nbsp; Welcome to the pantry</div>
-      <h2>Sign in to<br />Snack Overflow<span className="period">.</span></h2>
-      <p className="muted intro">Your office pantry, all in one place.</p>
+      <div className="login-badge">🍿 &nbsp; {registering ? 'Join the office pantry' : 'Welcome to the pantry'}</div>
+      <h2>{registering ? <>Create your<br />member account</> : <>Sign in to<br />Snack Overflow</>}<span className="period">.</span></h2>
+      <p className="muted intro">{registering ? 'Sign up to browse, vote for, and enjoy office snacks.' : 'Your office pantry, all in one place.'}</p>
       <form onSubmit={submit}>
-        <label className="form-label" htmlFor="email">Work email</label>
-        <input id="email" autoComplete="username" type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" />
+        {registering && <>
+          <label className="form-label" htmlFor="register-name">Full name</label>
+          <input id="register-name" autoComplete="name" minLength={2} maxLength={120} required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Sam Taylor" />
+        </>}
+        <label className="form-label" htmlFor="email">Email</label>
+        <input id="email" autoComplete="email" type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" />
         <label className="form-label" htmlFor="password">Password</label>
-        <input id="password" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
+        <input id="password" type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={registering ? 8 : undefined} maxLength={registering ? 128 : undefined} required value={password} onChange={e => setPassword(e.target.value)} />
+        {registering && <>
+          <p className="register-hint">At least 8 characters, including one letter and one number.</p>
+          <label className="form-label" htmlFor="confirm-password">Confirm password</label>
+          <input id="confirm-password" type="password" autoComplete="new-password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
+        </>}
         {error && <div className="inline-error" role="alert">⚠ {error}</div>}
-        <button className="primary login-submit" type="submit" disabled={loading}>{loading ? 'Signing in…' : 'Sign in to pantry →'}</button>
+        <button className="primary login-submit" type="submit" disabled={loading}>{loading ? (registering ? 'Creating account…' : 'Signing in…') : (registering ? 'Create member account →' : 'Sign in to pantry →')}</button>
       </form>
-      <div className="demo-box"><strong>🪄 &nbsp; Try a demo account</strong><p>Choose a role to see different permissions.</p>
+      <p className="auth-switch">{registering ? 'Already have an account?' : 'New to Snack Overflow?'}{' '}
+        <button type="button" disabled={loading} onClick={() => changeMode(registering ? 'login' : 'register')}>{registering ? 'Sign in' : 'Create an account'}</button>
+      </p>
+      {!registering && <div className="demo-box"><strong>🪄 &nbsp; Try a demo account</strong><p>Choose a role to see different permissions.</p>
         <div className="demo-actions"><button type="button" onClick={() => { setEmail('member@snackoverflow.dev'); setPassword('Member123!'); }}>👋 Member</button><button type="button" onClick={() => { setEmail('admin@snackoverflow.dev'); setPassword('Admin123!'); }}>⚙ Admin</button></div>
-      </div>
+      </div>}
     </div><div className="login-footer">Built for Bipolar Factory · Round 2 Internship Assignment</div></div>
   </div>;
 }
@@ -162,16 +200,14 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
   const [notice, setNotice] = useState<Notice>(null);
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const requestSeq = useRef(0);
-  // Automatically dismiss all notifications after 4 seconds
-useEffect(() => {
-  if (!notice) return;
 
-  const timer = window.setTimeout(() => {
-    setNotice(null);
-  }, 4000);
-
-  return () => window.clearTimeout(timer);
-}, [notice]);
+  // Every success and error toast disappears automatically after four seconds.
+  // The cleanup cancels the previous timer when a new notice replaces it.
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => { const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 250); return () => window.clearTimeout(timeout); }, [query]);
   useEffect(() => { setPage(1); }, [filter, category, debouncedQuery, sort]);
