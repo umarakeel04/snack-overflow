@@ -1,0 +1,16 @@
+# Dependencies, builds and runtime data
+node_modules/
+dist/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+.coverage
+htmlcov/
+.DS_Store
+*.log

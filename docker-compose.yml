@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: snack
+      POSTGRES_PASSWORD: snack_local_only
+      POSTGRES_DB: snackoverflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snack -d snackoverflow"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    ports:
+      - "127.0.0.1:5432:5432"
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://snack:snack_local_only@db:5432/snackoverflow
+      FRONTEND_ORIGINS: http://localhost:3000,http://localhost:5173
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+volumes:
+  pgdata:
