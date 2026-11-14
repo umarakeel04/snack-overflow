@@ -409,3 +409,10 @@ See `docs/DEMO_AND_SUBMISSION.md` for a concrete submission checklist and record
 ---
 
 *Built as an engineering assignment. The most important feature is not how many packets appear in the UI; it is that the database never tells two people the same last packet belongs to them.*
+
+
+## 🔴 Real-time pantry updates (bonus)
+
+PostgreSQL `LISTEN/NOTIFY` now pushes invalidation events to authenticated Server-Sent Events clients at `GET /snacks/events`. The backend seed installs statement-level triggers on `snacks` and `votes` during startup. Notifications arrive **after commit**, so rolled-back changes never appear. The React dashboard refreshes snack counts, the weekly winner, and activity history automatically across open tabs, while preserving pending optimistic UI overlays. The UI shows **Live sync** when connected and reconnects automatically after interruptions.
+
+This uses a streaming `fetch` with the existing Bearer token in the request **header**, never in a URL. Nginx disables buffering for the SSE endpoint. Test with two tabs (vote or consume in one, watch the other without pressing Refresh). See [`docs/REALTIME_BONUS_GUIDE.md`](docs/REALTIME_BONUS_GUIDE.md) for verification, limitations and 100× scaling trade-offs.

@@ -3,6 +3,7 @@ from sqlalchemy import select
 from .database import Base, SessionLocal, engine
 from .models import Snack, User, Vote
 from .security import hash_password
+from .realtime import install_notification_triggers
 
 SNACKS = [
     ("Masala Peanuts", "savoury", 3, 5),
@@ -22,6 +23,7 @@ SNACKS = [
 
 def seed():
     Base.metadata.create_all(engine)
+    install_notification_triggers(engine)
     with SessionLocal() as db:
         demo_accounts = [
             ("Pantry Admin", "admin@snackoverflow.dev", "Admin123!", "admin"),

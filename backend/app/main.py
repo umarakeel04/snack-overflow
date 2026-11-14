@@ -6,7 +6,7 @@ import logging
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import and_, case, delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +20,8 @@ from .schemas import (
 from .security import admin_only, create_session, current_user, hash_password, token_digest, verify_password
 from .services import InventoryFailure, consume_stock, restock
 from .idempotency import consume_once
+from .realtime import CHANNEL, format_change_event
+from .config import DATABASE_URL
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Snack Overflow API", version="1.0.0")
@@ -128,6 +130,37 @@ def voted_ids_for(db: Session, user_id: int, ids: list[int]) -> set[int]:
     if not ids:
         return set()
     return set(db.scalars(select(Vote.snack_id).where(Vote.user_id == user_id, Vote.snack_id.in_(ids))).all())
+
+
+# Authenticated SSE stream. Native EventSource cannot send a Bearer header, so
+# the React client uses streaming fetch and never puts the token in the URL.
+# Declare this literal route BEFORE /snacks/{snack_id}.
+@app.get("/snacks/events")
+async def pantry_events(request: Request, _user: User = Depends(current_user)):
+    if not DATABASE_URL.startswith("postgresql+"):
+        fail(503, "REALTIME_UNAVAILABLE", "Real-time updates require PostgreSQL")
+
+    async def generate():
+        import psycopg
+
+        dsn = DATABASE_URL.replace("postgresql+psycopg://", "postgresql://", 1)
+        try:
+            async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as connection:
+                await connection.execute(f"LISTEN {CHANNEL}")
+                # A connected frame lets the client reconcile writes that occurred
+                # between its initial GET and the LISTEN becoming active.
+                yield "event: connected\ndata: {}\n\n"
+                while not await request.is_disconnected():
+                    async for notification in connection.notifies(timeout=15):
+                        yield format_change_event(notification.payload)
+                    yield ": keepalive\n\n"
+        except Exception:
+            log.exception("Real-time SSE stream disconnected")
+            # The fetch client reconnects on EOF or a stream error.
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
+    })
 
 
 # Declare the literal /summary route BEFORE /{snack_id}.

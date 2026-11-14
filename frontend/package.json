@@ -9,7 +9,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src vite.config.ts",
-    "test:optimistic": "node --experimental-strip-types --test tests/optimistic.test.mjs"
+    "test:optimistic": "node --experimental-strip-types --test tests/optimistic.test.mjs",
+    "test:realtime": "node --experimental-strip-types --test tests/realtime.test.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

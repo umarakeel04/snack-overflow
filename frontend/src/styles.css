@@ -104,3 +104,8 @@ input::placeholder { color: #a4aeb9; }
   .vote-column { grid-area: vote; }
   .action-buttons { justify-content: flex-start; margin-left: 0; }
 }
+
+/* Real-time connection state, intentionally subtle and readable. */
+.live-pill { font-size: .72rem; font-weight: 750; color: #8895ab; white-space: nowrap; }
+.live-pill.connected { color: #208263; }
+@media (max-width: 660px) { .live-pill { display: none; } }

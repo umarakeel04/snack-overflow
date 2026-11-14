@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api } from './api';
 import { previewConsume, previewVote, withOptimisticSnacks } from './optimistic';
+import { subscribePantry } from './realtime';
 import type { Activity, Category, Snack, SnackPage, StockStatus, Summary, User } from './types';
 
 type View = 'pantry' | 'activity';
@@ -171,7 +172,7 @@ function SnackCard({ snack, admin, busy, onDialog, onVote }: { snack: Snack; adm
   </div>;
 }
 
-function ActivityView({ token }: { token: string }) {
+function ActivityView({ token, liveTick }: { token: string; liveTick: number }) {
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<Activity[]>([]);
   const [total, setTotal] = useState(0);
@@ -179,7 +180,7 @@ function ActivityView({ token }: { token: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
-  useEffect(() => { let active = true; setLoading(true); setError(''); api.activity(token, page).then(data => { if (active) { setItems(data.items); setTotal(data.total); setPages(data.pages); }}).catch(err => { if (active) setError(messageOf(err)); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [token, page, reload]);
+  useEffect(() => { let active = true; setLoading(true); setError(''); api.activity(token, page).then(data => { if (active) { setItems(data.items); setTotal(data.total); setPages(data.pages); }}).catch(err => { if (active) setError(messageOf(err)); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [token, page, reload, liveTick]);
   return <section className="activity-section"><div className="section-heading"><div><p className="eyebrow">PANTRY HISTORY</p><h2>Activity log <span className="heading-count">{total}</span></h2><p className="muted">Every stock movement, accounted for.</p></div><button className="secondary" onClick={() => setReload(n => n + 1)}>↻ Refresh</button></div>
     {loading ? <div className="state-card">Loading activity…</div> : error ? <div className="state-card error-state">⚠ {error}<button className="secondary" onClick={() => setReload(n => n + 1)}>Retry</button></div> : items.length === 0 ? <div className="state-card">No activity yet. Consume or restock a snack to see the audit trail.</div> : <div className="activity-table-wrap"><table className="activity-table"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Snack</th><th>Amount</th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{formatDate(item.created_at)}</td><td>{item.user_name}</td><td><span className={`activity-action ${item.action}`}>{item.action === 'consumed' ? '− Consumed' : '+ Restocked'}</span></td><td><strong>{item.snack_name}</strong></td><td className="tabular">{item.amount}</td></tr>)}</tbody></table></div>}
     <div className="pagination"><span>{total} recorded event{total === 1 ? '' : 's'}</span><div><button disabled={page <= 1 || loading} onClick={() => setPage(x => x - 1)}>← Previous</button><span>{pages ? `${page} / ${pages}` : '0 / 0'}</span><button disabled={page >= pages || loading} onClick={() => setPage(x => x + 1)}>Next →</button></div></div>
@@ -202,6 +203,8 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
   const [dialog, setDialog] = useState<Dialog>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
+  const [liveTick, setLiveTick] = useState(0);
+  const [liveConnected, setLiveConnected] = useState(false);
   // Pending previews are overlays, not changes to the server's cached data.
   // This keeps rollback correct even if an unrelated reload finishes mid-flight.
   const [optimisticSnacks, setOptimisticSnacks] = useState<ReadonlyMap<number, Snack>>(() => new Map());
@@ -237,6 +240,22 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
     } finally { if (id === requestSeq.current) setLoading(false); }
   }, [token, page, debouncedQuery, filter, category, sort]);
   useEffect(() => { void reload(); }, [reload]);
+
+  // One SSE stream per logged-in dashboard; preserve filters/page on updates.
+  // Debounce bursts of notifications and keep the newest reload callback.
+  const latestReload = useRef(reload);
+  useEffect(() => { latestReload.current = reload; }, [reload]);
+  useEffect(() => {
+    let timer: number | undefined;
+    const stop = subscribePantry(token, () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void latestReload.current();
+        setLiveTick(value => value + 1);
+      }, 150);
+    }, setLiveConnected);
+    return () => { window.clearTimeout(timer); stop(); };
+  }, [token]);
 
   async function mutate(action: () => Promise<unknown>, success: string) {
     try { await action(); setNotice({ kind: 'success', message: success }); await reload(); }
@@ -320,12 +339,12 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
       </nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><span>✦ PANTRY TIP</span><p>Check what’s running low before you grab your afternoon pick-me-up.</p></div><div className="sidebar-profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><small>{isAdmin ? 'Pantry administrator' : 'Team member'}</small></div><button title="Sign out" aria-label="Sign out" onClick={onLogout}>↪</button></div></div>
     </aside>
-    <div className="main-panel"><header className="topbar"><div className="topbar-brand">SNACK <span>OVERFLOW</span></div><div className="topbar-right"><span className="today-mark">✦ Made for snack lovers</span><span className="role-pill">{isAdmin ? '⚙ Admin' : '✦ Member'}</span><button className="topbar-logout" onClick={onLogout}>Sign out ↗</button></div></header>
+    <div className="main-panel"><header className="topbar"><div className="topbar-brand">SNACK <span>OVERFLOW</span></div><div className="topbar-right"><span className={`live-pill ${liveConnected ? 'connected' : ''}`} title="Pantry updates across open tabs">{liveConnected ? '● Live sync' : '◌ Connecting…'}</span><span className="role-pill">{isAdmin ? '⚙ Admin' : '✦ Member'}</span><button className="topbar-logout" onClick={onLogout}>Sign out ↗</button></div></header>
       <nav className="mobile-nav" aria-label="Mobile navigation">
         <button type="button" className={view === 'pantry' ? 'active' : ''} onClick={() => setView('pantry')}>▦ Pantry</button>
         {isAdmin && <button type="button" className={view === 'activity' ? 'active' : ''} onClick={() => setView('activity')}>◷ Activity</button>}
       </nav>
-      <main className="main-content">{view === 'activity' && isAdmin ? <ActivityView token={token}/> : <>
+      <main className="main-content">{view === 'activity' && isAdmin ? <ActivityView token={token} liveTick={liveTick}/> : <>
         <div className="welcome-row"><div><p className="eyebrow">WELCOME TO THE PANTRY 👋</p><h1>Hey, {user.name.split(' ')[0]}<span className="period">.</span> Hungry?</h1><p className="muted">Here's what's happening in the office pantry today.</p></div>{isAdmin && <button className="primary add-button" onClick={() => setDialog({ kind: 'add' })}>+ &nbsp; Add a snack</button>}</div>
         <section className="summary-metrics" aria-label="Pantry summary"><Metric caption="Total snacks" value={summary?.total ?? 0} kind="total" tone="blue"/><Metric caption="In stock" value={summary?.stocked ?? 0} kind="box" tone="green"/><Metric caption="Running low" value={summary?.running_low ?? 0} kind="low" tone="amber"/><Metric caption="Out of stock" value={summary?.gone ?? 0} kind="gone" tone="red"/></section>
         <div className="feature-strip"><div className="feature-medal">🏆</div><div><span className="feature-kicker">THE PEOPLE HAVE SPOKEN</span><h2>Snack of the week</h2><p>{summary?.snack_of_the_week ? <>Our current favourite: <strong>{emoji[summary.snack_of_the_week.category]} {summary.snack_of_the_week.name}</strong></> : 'Be the first to vote for a snack this week!'}</p></div><div className="feature-right"><span>★</span><strong>{summary?.snack_of_the_week?.votes_this_week ?? 0}</strong><small>votes this week</small></div></div>

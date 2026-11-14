@@ -52,6 +52,12 @@ jobs:
       - name: Lint React and TypeScript (ESLint)
         working-directory: frontend
         run: npm run lint
+      - name: Test optimistic UI projections
+        working-directory: frontend
+        run: npm run test:optimistic
+      - name: Test SSE frame parsing
+        working-directory: frontend
+        run: npm run test:realtime
       - name: Type-check and build
         working-directory: frontend
         run: npm run build
