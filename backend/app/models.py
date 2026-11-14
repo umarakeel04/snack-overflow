@@ -1,6 +1,6 @@
 """Database constraints enforce the invariants independent of API code."""
 from datetime import datetime, timezone
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -74,3 +74,18 @@ class LoginSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ConsumeIdempotency(Base):
+    """Completed consume receipts, unique per (user, key).
+
+    No FK to snacks: a retry must still replay after a snack is deleted.
+    The row and the inventory/audit changes commit atomically.
+    """
+    __tablename__ = "consume_idempotency"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    snack_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False, index=True)

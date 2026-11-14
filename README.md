@@ -74,7 +74,7 @@ Open http://localhost:5173. The Vite dev server proxies `/api` to port `8000`; t
 | Search, category/status filters | Server-side queries; no filtering the current frontend page as a substitute |
 | Pagination and sorting | Server-side page/page_size, sort by name, quantity, votes |
 | Dashboard | Counts by status and Snack of the Week (most votes in the last seven days) |
-| Consume | Atomic conditional DB update with 409 when stock is insufficient |
+| Consume | Atomic conditional DB update with 409 when stock is insufficient; optional `Idempotency-Key` for safe retries |
 | Restock | Atomic conditional DB update with max quantity safety |
 | Vote/unvote | Composite database primary key `(user_id, snack_id)` prevents duplicates |
 | Activity history | Consume and restock activity inserted in the same transaction as stock change |
@@ -118,6 +118,7 @@ The frontend never writes directly to PostgreSQL. All reads/writes go through Fa
 | `snacks` | `id`, `name`, `category`, `quantity`, `low_stock_threshold`, `created_at` | Unique case-insensitive name index, category `CHECK`, quantity/threshold bounds `CHECK` |
 | `votes` | `user_id`, `snack_id`, `created_at` | Composite primary key guarantees one vote per user/snack at DB level |
 | `activities` | `id`, `user_id`, `snack_id`, `snack_name`, `action`, `amount`, `created_at` | Positive amount + valid action checks; same transaction as stock update |
+| `consume_idempotency` | `(user_id, key)`, `snack_id`, `amount`, `response_json`, `created_at` | Composite primary key guarantees one result per user/key; stored response is replayable even if snack is later deleted |
 
 **Derived status** (never a stored column):
 
@@ -150,6 +151,22 @@ The successful SQL `UPDATE` and `INSERT INTO activities (...)` run within the **
 
 Restocks use the same pattern with `quantity <= MAX_QUANTITY - :amount` to prevent overflow.
 
+### Idempotent consume retries (bonus)
+
+The React client sends an `Idempotency-Key` (a UUID) when consuming. The key stays the same when retrying the **same snack and amount** in the open dialog after an uncertain network result; changing the amount generates a new key. An HTTP client may also send its own 8–128 character key (`A–Z`, `a–z`, `0–9`, `.`, `_`, `:`, `-`). The header is optional for compatibility with older clients.
+
+PostgreSQL's primary key on `consume_idempotency (user_id, key)` is the single source of truth. For a new key, the API **claims the key, decrements stock, inserts activity and saves the response in one DB transaction**. Simultaneous requests with an identical key are serialized by the unique constraint; after the first commits, they replay its original `200` response **without consuming a second packet**. Same user/key with a different snack or amount returns `409 IDEMPOTENCY_KEY_REUSED`. Different users have separate key namespaces. In case of failure, the transaction rolls back, including the key claim, so the request can be retried after the problem is fixed.
+
+This guarantees *at most one successful consumption per user/key*, not that every network request succeeds. The saved response is a historical snapshot, intentionally **not** today's live quantity. Call `GET /snacks/{id}` for current stock. Keys/receipts currently persist until account deletion; production scale would need a documented retention and cleanup policy (for example 24 hours after the last client retry window). New `consume_idempotency` table is created by the existing seed startup without deleting data; a production database would use migrations (Alembic).
+
+Try the live HTTP demonstration after `docker compose up -d --build backend frontend`:
+
+```powershell
+python scripts/smoke_idempotency.py
+```
+
+It sends ten simultaneous requests with the **same** key for one packet. Expected: ten HTTP `200` replays, stock `3 -> 2`, exactly one activity, and a `409` when the same key is reused with another amount. This complements `python scripts/smoke_http.py`, which deliberately omits keys to demonstrate 3 successful / 7 conflicting *independent* consumption requests.
+
 ### Votes are safe under contention
 
 The primary key on `votes (user_id, snack_id)` makes duplicate votes impossible, including two simultaneous clicks or HTTP requests. An attempted duplicate is caught as `IntegrityError` and translated to HTTP `409` with `ALREADY_VOTED`. It is **not** just a prior `SELECT` check.
@@ -166,11 +183,12 @@ The primary key on `votes (user_id, snack_id)` makes duplicate votes impossible,
 
 ## 📗 API contract
 
-All routes except `POST /auth/login` and `GET /health` require `Authorization: Bearer <session-token>`.
+All routes except `POST /auth/login`, `POST /auth/register`, and `GET /health` require `Authorization: Bearer <session-token>`.
 
 | Method | Endpoint | Role | Notes |
 | --- | --- | --- | --- |
 | `POST` | `/auth/login` | Public | Body: `{ "email", "password" }`; returns token + user |
+| `POST` | `/auth/register` | Public | Body: `{ "name", "email", "password" }`; always creates a **member** and returns token + user (`201`), or duplicate-email `409` |
 | `GET` | `/auth/me` | Any logged in | Current user |
 | `POST` | `/auth/logout` | Any logged in | Revokes token; `204` |
 | `GET` | `/health` | Public | Health response |
@@ -180,7 +198,7 @@ All routes except `POST /auth/login` and `GET /health` require `Authorization: B
 | `POST` | `/snacks` | Admin | Create `{name, category, quantity?, low_stock_threshold?}`; `201` |
 | `PATCH` | `/snacks/{id}` | Admin | Edit `{name?, category?, low_stock_threshold?}` |
 | `DELETE` | `/snacks/{id}` | Admin | Delete; `204` |
-| `POST` | `/snacks/{id}/consume` | Member/Admin | `{ "amount": integer }`; `409` if not enough |
+| `POST` | `/snacks/{id}/consume` | Member/Admin | `{ "amount": integer }`; optional `Idempotency-Key` header; `409` if not enough or key reused for different request |
 | `POST` | `/snacks/{id}/restock` | Admin | `{ "amount": integer }`; `409` if max exceeded |
 | `POST` | `/snacks/{id}/vote` | Member/Admin | `201`; `409` if already voted |
 | `DELETE` | `/snacks/{id}/vote` | Member/Admin | Removes vote; `409` if not voted |
@@ -216,6 +234,7 @@ curl -X POST http://localhost:8000/auth/login \
 curl -X POST http://localhost:8000/snacks/1/consume \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: example-consume-12345' \
   -d '{"amount":1}'
 ```
 
@@ -255,6 +274,15 @@ python scripts/smoke_http.py
 
 This standard-library-only script creates a disposable snack with three packets, fires **10 simultaneous authenticated HTTP consume requests** (expect exactly three `200` and seven `409`), races **10 duplicate vote requests** (one `201`, nine `409`), checks member authorization, audits the inventory moves, and deletes the test snack. If the script exits successfully you can show its output in the recording. It does not delete historical audit entries, which is intentional.
 
+## 🍿 Bonus: member sign-up
+
+- The login screen now includes **Create an account**, with name, email, password, and password confirmation. After successful sign-up, the newly created member is signed in automatically.
+- `POST /auth/register` accepts only `name`, `email`, and `password`. It never trusts a client-provided role; the server assigns `member` directly.
+- Passwords must have 8–128 characters and contain at least one letter and one number. Passwords are stored using the existing per-user salted scrypt hashing, not plaintext. Emails are normalized to lowercase before insertion.
+- The `users.email` unique constraint is the final concurrency-safe guard against duplicate accounts; conflicting sign-ups receive `409 EMAIL_ALREADY_REGISTERED`. Invalid requests use the existing `422` error contract.
+- There is no email verification, anti-bot challenge, password-reset flow, or registration rate limiting because this is a **local internship demonstration**, not a production identity service. These would be required before public deployment.
+- Tests in `backend/tests/test_registration.py` cover new member creation, hashed passwords, normalized duplicate emails, validation, server-enforced roles, and admin-route rejection. Run `pytest -q` using `backend/requirements-dev.txt`.
+
 ## 🧠 Short design note: decisions, trade-offs, 100× users
 
 **Decisions:**
@@ -266,6 +294,7 @@ This standard-library-only script creates a disposable snack with three packets,
 5. **Audit log in the stock transaction** favors correctness over maximum throughput. Failed writes never leave phantom activity records.
 6. **Stock changes have dedicated endpoints** (no quantity changes in PATCH) to prevent bypassing the activity trail.
 7. **Derived status** avoids redundant storage. The summary endpoint aggregates directly in SQL so it cannot disagree with the list.
+8. **Database-backed idempotency for consume** prevents double-charging stock on client retries. The request key and result are committed with the inventory update and activity event.
 
 **Trade-offs / known limitations:**
 
@@ -273,7 +302,7 @@ This standard-library-only script creates a disposable snack with three packets,
 - Session tokens reside in `sessionStorage` for demonstration. A deployment would use HttpOnly/SameSite cookies, HTTPS, CSRF safeguards, session cleanup, and a login rate limiter.
 - Only restock and consume stock changes generate activity entries; new snack initial stock is part of creating the record. There is no edit/delete activity event (not required by the challenge).
 - The weekly winner is based on the preceding 7×24 hours, not a Monday–Sunday calendar window. A vote cast before that window is not counted; changing this definition would require product input.
-- No WebSocket/SSE, retries with Idempotency-Key, automatic demo deployment, or full end-to-end browser tests; correctness, authorization, and DB invariants took precedence.
+- No WebSocket/SSE, public demo deployment, or full end-to-end browser tests; correctness, authorization, and DB invariants took precedence. Consume idempotency is implemented, but receipt retention/cleanup is a documented production follow-up.
 
 **What breaks first at 100× users?**
 
@@ -281,7 +310,9 @@ This standard-library-only script creates a disposable snack with three packets,
 - Hot snack rows experience increased row-lock contention. The conditional UPDATE remains correct, but latency rises on very popular snacks. Measure conflict rates, DB lock waits, p95 latency, and consider a queue for extremely hot items if product requirements justify it.
 - A single small PostgreSQL instance becomes the capacity bottleneck. Scale reads where appropriate, handle migrations, centralize metrics/tracing, add backups, and use managed database resources.
 
-**Why skip other bonuses?** The assignment says depth beats breadth. The central proof is *3 successes, 7 conflicts, 0 negative inventory, 3 audit entries* under a real database race. Live updates and cosmetic animations would not improve that invariant.
+**Why keep other bonuses limited?** The assignment says depth beats breadth. The central proof is *3 successes, 7 conflicts, 0 negative inventory, 3 audit entries* under a real database race. Member sign-up and consume idempotency were added only after the atomic inventory, vote uniqueness, authentication, and CI checks were working. Live updates and cosmetic animations would not improve those invariants.
+
+For the implementation steps and demo script, see [`docs/IDEMPOTENCY_BONUS_GUIDE.md`](docs/IDEMPOTENCY_BONUS_GUIDE.md).
 
 ## 📂 Project structure
 
@@ -303,6 +334,7 @@ snack-overflow/
 │   ├── app/
 │   │   ├── main.py          # Routes, filters, auth guards, errors
 │   │   ├── services.py      # Atomic inventory and audit transactions
+│   │   ├── idempotency.py   # DB-backed consume idempotency and response replay
 │   │   ├── models.py        # SQLAlchemy tables and constraints
 │   │   ├── security.py      # Scrypt passwords + sessions + role dependency
 │   │   ├── schemas.py       # Pydantic validation and API contract
@@ -311,13 +343,18 @@ snack-overflow/
 │   │   └── config.py        # Environment-based settings
 │   ├── tests/
 │   │   ├── test_api.py
-│   │   └── test_concurrency.py
+│   │   ├── test_concurrency.py
+│   │   ├── test_registration.py
+│   │   └── test_idempotency.py
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── scripts/
-│   └── smoke_http.py      # Live 10-request HTTP race and permissions smoke test
+│   ├── smoke_http.py          # Live 10-request HTTP race and permissions smoke test
+│   └── smoke_idempotency.py   # Live 10 same-key retries and replay smoke test
 └── docs/
-    └── DEMO_AND_SUBMISSION.md
+    ├── DEMO_AND_SUBMISSION.md
+    ├── SIGNUP_BONUS_GUIDE.md
+    └── IDEMPOTENCY_BONUS_GUIDE.md
 ```
 
 ## ✉️ Submission

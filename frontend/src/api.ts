@@ -50,8 +50,12 @@ export const api = {
   edit: (token: string, id: number, data: Partial<SnackInput>) =>
     request<Snack>(`/snacks/${id}`, token, { method: 'PATCH', body: JSON.stringify(data) }),
   delete: (token: string, id: number) => request<void>(`/snacks/${id}`, token, { method: 'DELETE' }),
-  consume: (token: string, id: number, amount: number) =>
-    request<Snack>(`/snacks/${id}/consume`, token, { method: 'POST', body: JSON.stringify({ amount }) }),
+  consume: (token: string, id: number, amount: number, requestKey: string) =>
+    request<Snack>(`/snacks/${id}/consume`, token, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': requestKey },
+      body: JSON.stringify({ amount }),
+    }),
   restock: (token: string, id: number, amount: number) =>
     request<Snack>(`/snacks/${id}/restock`, token, { method: 'POST', body: JSON.stringify({ amount }) }),
   vote: (token: string, id: number) => request<Snack>(`/snacks/${id}/vote`, token, { method: 'POST' }),

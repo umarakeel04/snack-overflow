@@ -110,12 +110,14 @@ function DialogShell({ title, subtitle, children, onClose }: { title: string; su
   </div>;
 }
 
-function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>; onClose: () => void; onSave: (dialog: NonNullable<Dialog>, values?: SnackForm | number) => Promise<void> }) {
+function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>; onClose: () => void; onSave: (dialog: NonNullable<Dialog>, values?: SnackForm | number, requestKey?: string) => Promise<void> }) {
   const initial = dialog.kind === 'edit' ? { name: dialog.snack.name, category: dialog.snack.category, quantity: dialog.snack.quantity, low_stock_threshold: dialog.snack.low_stock_threshold } : blankForm;
   const [form, setForm] = useState<SnackForm>(initial);
   const [amount, setAmount] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Keep this key across retries of the SAME dialog/amount after network errors.
+  const consumeRequestKey = useRef(crypto.randomUUID());
   const change = (key: keyof SnackForm, value: string | number) => setForm(old => ({ ...old, [key]: value }));
   const isForm = dialog.kind === 'add' || dialog.kind === 'edit';
   const title = dialog.kind === 'add' ? 'Add a new snack' : dialog.kind === 'edit' ? 'Edit snack' : dialog.kind === 'consume' ? 'Grab a snack' : dialog.kind === 'restock' ? 'Restock the pantry' : 'Remove this snack?';
@@ -123,7 +125,7 @@ function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>;
   async function submit(e: FormEvent) {
     e.preventDefault();
     setSaving(true); setError('');
-    try { await onSave(dialog, isForm ? form : amount); onClose(); }
+    try { await onSave(dialog, isForm ? form : amount, dialog.kind === 'consume' ? consumeRequestKey.current : undefined); onClose(); }
     catch (err) { setError(messageOf(err)); }
     finally { setSaving(false); }
   }
@@ -140,7 +142,7 @@ function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>;
         {dialog.kind === 'edit' && <p className="helper">Stock quantity is adjusted using Consume / Restock so changes are audited.</p>}
       </> : dialog.kind === 'delete' ? <div className="delete-alert">⚠️ This action cannot be undone.</div> : <>
         <label className="form-label" htmlFor="amount">Number of packets</label>
-        <input id="amount" type="number" min="1" max={dialog.kind === 'consume' ? Math.max(dialog.snack.quantity, 1) : 1000000} required value={amount} onChange={e => setAmount(Number(e.target.value))} autoFocus />
+        <input id="amount" type="number" min="1" max={dialog.kind === 'consume' ? Math.max(dialog.snack.quantity, 1) : 1000000} required value={amount} onChange={e => { setAmount(Number(e.target.value)); if (dialog.kind === 'consume') consumeRequestKey.current = crypto.randomUUID(); }} autoFocus />
         {dialog.kind === 'consume' && <p className="helper">Inventory is checked again by the server when you confirm.</p>}
       </>}
       {error && <div className="inline-error" role="alert">⚠ {error}</div>}
@@ -234,14 +236,14 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
     try { await action(); setNotice({ kind: 'success', message: success }); await reload(); }
     catch (err) { setNotice({ kind: 'error', message: messageOf(err) }); await reload(); throw err; }
   }
-  async function save(d: NonNullable<Dialog>, value?: SnackForm | number) {
+  async function save(d: NonNullable<Dialog>, value?: SnackForm | number, requestKey?: string) {
     switch (d.kind) {
       case 'add': await mutate(() => api.create(token, value as SnackForm), 'New snack added successfully.'); break;
       case 'edit': {
         const { name, category, low_stock_threshold } = value as SnackForm;
         await mutate(() => api.edit(token, d.snack.id, { name, category, low_stock_threshold }), 'Snack details updated.'); break;
       }
-      case 'consume': await mutate(() => api.consume(token, d.snack.id, value as number), 'Enjoy your snack! Inventory updated.'); break;
+      case 'consume': await mutate(() => api.consume(token, d.snack.id, value as number, requestKey!), 'Enjoy your snack! Inventory updated.'); break;
       case 'restock': await mutate(() => api.restock(token, d.snack.id, value as number), 'Pantry restocked successfully.'); break;
       case 'delete': await mutate(() => api.delete(token, d.snack.id), 'Snack removed from the pantry.'); break;
     }

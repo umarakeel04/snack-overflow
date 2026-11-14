@@ -1,8 +1,9 @@
 """Snack Overflow REST API. Start with: uvicorn app.main:app --reload"""
 from datetime import timedelta
+import re
 from math import ceil
 import logging
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -18,12 +19,13 @@ from .schemas import (
 )
 from .security import admin_only, create_session, current_user, hash_password, token_digest, verify_password
 from .services import InventoryFailure, consume_stock, restock
+from .idempotency import consume_once
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Snack Overflow API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=FRONTEND_ORIGINS,
                    allow_credentials=False, allow_methods=["GET", "POST", "PATCH", "DELETE"],
-                   allow_headers=["Authorization", "Content-Type"])
+                   allow_headers=["Authorization", "Content-Type", "Idempotency-Key"])
 
 
 def fail(status: int, code: str, message: str):
@@ -231,9 +233,22 @@ def remove_snack(snack_id: int, _user: User = Depends(admin_only), db: Session =
 
 
 @app.post("/snacks/{snack_id}/consume", response_model=SnackOut)
-def consume(snack_id: int, body: AmountIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    consume_stock(db, snack_id, user.id, body.amount)
-    return get_snack(snack_id, user, db)
+def consume(
+    snack_id: int, body: AmountIn,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    user: User = Depends(current_user), db: Session = Depends(get_db),
+):
+    if idempotency_key is None:
+        # Backward-compatible: old clients / concurrency smoke test remain unchanged.
+        consume_stock(db, snack_id, user.id, body.amount)
+        return get_snack(snack_id, user, db)
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key):
+        fail(422, "INVALID_IDEMPOTENCY_KEY",
+             "Idempotency-Key must be 8-128 letters, digits, periods, underscores, colons or hyphens")
+    return consume_once(
+        db, user.id, idempotency_key, snack_id, body.amount,
+        lambda: get_snack(snack_id, user, db).model_dump(mode="json"),
+    )
 
 
 @app.post("/snacks/{snack_id}/restock", response_model=SnackOut)

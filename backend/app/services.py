@@ -12,7 +12,7 @@ class InventoryFailure(Exception):
         super().__init__(message)
 
 
-def consume_stock(db: Session, snack_id: int, user_id: int, amount: int) -> None:
+def consume_stock(db: Session, snack_id: int, user_id: int, amount: int, *, commit: bool = True) -> None:
     """One atomic conditional UPDATE and audit INSERT in a single DB transaction.
 
     Under PostgreSQL READ COMMITTED, competing UPDATEs acquire a row lock;
@@ -32,7 +32,9 @@ def consume_stock(db: Session, snack_id: int, user_id: int, amount: int) -> None
         raise InventoryFailure(409, "INSUFFICIENT_STOCK", "Someone beat you to the last packet! Not enough stock remains.")
     db.add(Activity(user_id=user_id, snack_id=snack_id, snack_name=result.name,
                     action="consumed", amount=amount))
-    db.commit()  # UPDATE and activity commit together; failure rolls both back.
+    if commit:
+        db.commit()  # UPDATE and activity commit together; failure rolls both back.
+    # With commit=False, the caller owns the transaction (idempotent consume).
 
 
 def restock(db: Session, snack_id: int, user_id: int, amount: int) -> None:
