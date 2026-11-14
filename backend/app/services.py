@@ -3,7 +3,6 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from .config import MAX_QUANTITY
 from .models import Snack, Activity
-from .schemas import AmountIn
 
 
 class InventoryFailure(Exception):

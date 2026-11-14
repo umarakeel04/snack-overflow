@@ -238,6 +238,30 @@ curl -X POST http://localhost:8000/snacks/1/consume \
   -d '{"amount":1}'
 ```
 
+## 🧹 Automated linting (CI bonus)
+
+The GitHub Actions `CI` workflow runs on **every push and pull request**. It now checks:
+
+- **Python:** Ruff static linting (`E4`, `E7`, `E9`, and `F` rules), plus Pytest, including real PostgreSQL contention tests. Existing compact single-line statement style is allowed by the documented Ruff configuration.
+- **React/TypeScript:** ESLint recommended checks, TypeScript type-checking, and a Vite production build.
+
+To run the checks on Windows before pushing:
+
+```powershell
+# At the repository root; use your existing virtual environment
+cd backend
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m ruff check app tests
+.\.venv\Scripts\python.exe -m pytest -q
+cd ..\frontend
+npm install          # Updates package-lock.json when lint dependencies change
+npm run lint
+npm run build
+cd ..
+```
+
+Commit the updated `frontend/package-lock.json` after `npm install`, so GitHub Actions can use reproducible `npm ci`. Lint checks are intentionally separate from behavioral tests: **passing lint does not replace concurrency or security tests**.
+
 ## 🧪 Testing and CI
 
 **Backend test suite** includes:

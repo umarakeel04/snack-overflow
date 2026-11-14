@@ -5,7 +5,7 @@ on:
 
 jobs:
   backend:
-    name: FastAPI tests (PostgreSQL concurrency included)
+    name: FastAPI lint and tests (PostgreSQL included)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -31,12 +31,15 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: python -m pip install -r backend/requirements-dev.txt
+      - name: Lint Python (Ruff)
+        working-directory: backend
+        run: python -m ruff check app tests
       - name: Run tests (including real Postgres contention)
         working-directory: backend
         run: python -m pytest -q
 
   frontend:
-    name: React TypeScript build
+    name: React lint, type-check and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +48,10 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         working-directory: frontend
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+      - name: Lint React and TypeScript (ESLint)
+        working-directory: frontend
+        run: npm run lint
       - name: Type-check and build
         working-directory: frontend
         run: npm run build

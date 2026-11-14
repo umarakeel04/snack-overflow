@@ -1,0 +1,8 @@
+# Python lints are intentionally focused on correctness and unused symbols.
+# The original assignment uses concise one-line statements, which are allowed.
+target-version = "py312"
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E701", "E702"]

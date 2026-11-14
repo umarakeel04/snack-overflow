@@ -1,6 +1,6 @@
 """Business requirements tested through the real HTTP API."""
 from sqlalchemy import select
-from app.models import Activity, LoginSession, Snack, Vote
+from app.models import Activity, Snack, Vote
 
 
 def test_requires_login(setup):
