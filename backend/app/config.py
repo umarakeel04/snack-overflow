@@ -6,6 +6,10 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgres://"):]
+elif DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = "postgresql+psycopg://" + DATABASE_URL[len("postgresql://"):]
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is missing. Configure backend/.env or the Docker Compose environment.")
 FRONTEND_ORIGINS = [origin.strip() for origin in os.getenv(

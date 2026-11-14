@@ -416,3 +416,8 @@ See `docs/DEMO_AND_SUBMISSION.md` for a concrete submission checklist and record
 PostgreSQL `LISTEN/NOTIFY` now pushes invalidation events to authenticated Server-Sent Events clients at `GET /snacks/events`. The backend seed installs statement-level triggers on `snacks` and `votes` during startup. Notifications arrive **after commit**, so rolled-back changes never appear. The React dashboard refreshes snack counts, the weekly winner, and activity history automatically across open tabs, while preserving pending optimistic UI overlays. The UI shows **Live sync** when connected and reconnects automatically after interruptions.
 
 This uses a streaming `fetch` with the existing Bearer token in the request **header**, never in a URL. Nginx disables buffering for the SSE endpoint. Test with two tabs (vote or consume in one, watch the other without pressing Refresh). See [`docs/REALTIME_BONUS_GUIDE.md`](docs/REALTIME_BONUS_GUIDE.md) for verification, limitations and 100× scaling trade-offs.
+
+
+## ☁️ Public deployment (optional bonus)
+
+The Railway deployment uses **private** PostgreSQL + FastAPI services and a **public** Nginx/React frontend. Nginx proxies `/api` and authenticated `/api/snacks/events` to the internal backend. Production demo credentials must be generated privately as Railway variables; local demo passwords are **not suitable for public hosting**. See [`docs/RAILWAY_DEPLOYMENT_GUIDE.md`](docs/RAILWAY_DEPLOYMENT_GUIDE.md) for deployment, limitations, and testing.

@@ -11,6 +11,7 @@ type Notice = { message: string; kind: 'success' | 'error' } | null;
 
 const emoji: Record<Category, string> = { sweet: '🍪', savoury: '🥨', drink: '🧃', 'healthy-ish': '🥜' };
 const label: Record<StockStatus, string> = { stocked: 'In stock', running_low: 'Running low', gone: 'Out of stock' };
+const publicDeployment = import.meta.env.VITE_PUBLIC_DEPLOYMENT === 'true';
 const blankForm: SnackForm = { name: '', category: 'savoury', quantity: 0, low_stock_threshold: 5 };
 
 function stockLabel(stock: StockStatus) { return <span className={`status status-${stock}`}><i />{label[stock]}</span>; }
@@ -24,8 +25,8 @@ function markIcon(kind: string) {
 function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('member@snackoverflow.dev');
-  const [password, setPassword] = useState('Member123!');
+  const [email, setEmail] = useState(publicDeployment ? '' : 'member@snackoverflow.dev');
+  const [password, setPassword] = useState(publicDeployment ? '' : 'Member123!');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -35,8 +36,8 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
     setMode(next);
     setError('');
     setName('');
-    setEmail(next === 'login' ? 'member@snackoverflow.dev' : '');
-    setPassword(next === 'login' ? 'Member123!' : '');
+    setEmail(next === 'login' && !publicDeployment ? 'member@snackoverflow.dev' : '');
+    setPassword(next === 'login' && !publicDeployment ? 'Member123!' : '');
     setConfirmPassword('');
   }
 
@@ -96,7 +97,7 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
       <p className="auth-switch">{registering ? 'Already have an account?' : 'New to Snack Overflow?'}{' '}
         <button type="button" disabled={loading} onClick={() => changeMode(registering ? 'login' : 'register')}>{registering ? 'Sign in' : 'Create an account'}</button>
       </p>
-      {!registering && <div className="demo-box"><strong>🪄 &nbsp; Try a demo account</strong><p>Choose a role to see different permissions.</p>
+      {!registering && !publicDeployment && <div className="demo-box"><strong>🪄 &nbsp; Try a demo account</strong><p>Choose a role to see different permissions.</p>
         <div className="demo-actions"><button type="button" onClick={() => { setEmail('member@snackoverflow.dev'); setPassword('Member123!'); }}>👋 Member</button><button type="button" onClick={() => { setEmail('admin@snackoverflow.dev'); setPassword('Admin123!'); }}>⚙ Admin</button></div>
       </div>}
     </div><div className="login-footer">Built for Bipolar Factory · Round 2 Internship Assignment</div></div>
