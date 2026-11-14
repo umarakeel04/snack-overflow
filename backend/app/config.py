@@ -5,10 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://snack:snack_local_only@localhost:5432/snackoverflow",
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is missing. Configure backend/.env or the Docker Compose environment.")
 FRONTEND_ORIGINS = [origin.strip() for origin in os.getenv(
     "FRONTEND_ORIGINS", "http://localhost:5173,http://localhost:3000"
 ).split(",") if origin.strip()]

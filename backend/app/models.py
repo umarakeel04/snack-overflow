@@ -1,6 +1,6 @@
 """Database constraints enforce the invariants independent of API code."""
 from datetime import datetime, timezone
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -35,6 +35,10 @@ class Snack(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
+# Enforce case-insensitive snack-name uniqueness even under concurrent inserts.
+Index("uq_snacks_name_lower", func.lower(Snack.name), unique=True)
+
+
 class Vote(Base):
     __tablename__ = "votes"
     __table_args__ = (UniqueConstraint("user_id", "snack_id", name="uq_vote_user_snack"),)
@@ -42,6 +46,10 @@ class Vote(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     snack_id: Mapped[int] = mapped_column(ForeignKey("snacks.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+# Speeds up per-snack vote counts and the trailing-seven-day winner query.
+Index("ix_votes_snack_created", Vote.snack_id, Vote.created_at)
 
 
 class Activity(Base):

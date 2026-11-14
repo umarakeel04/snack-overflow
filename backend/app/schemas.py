@@ -8,6 +8,7 @@ Status = Literal["stocked", "running_low", "gone"]
 
 
 class Credentials(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     email: EmailStr
     password: str = Field(min_length=1, max_length=256)
 
@@ -26,6 +27,7 @@ class LoginOut(BaseModel):
 
 
 class SnackBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
     category: Category
     low_stock_threshold: int = Field(default=5, ge=0, le=MAX_QUANTITY)
@@ -44,6 +46,7 @@ class SnackCreate(SnackBase):
 
 
 class SnackPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     # Intentionally excludes quantity: stock changes must be audited by restock/consume.
     name: str | None = Field(default=None, min_length=1, max_length=120)
     category: Category | None = None
@@ -61,6 +64,7 @@ class SnackPatch(BaseModel):
 
 
 class AmountIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     amount: int = Field(ge=1, le=MAX_QUANTITY)
 
 
