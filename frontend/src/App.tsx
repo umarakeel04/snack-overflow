@@ -162,6 +162,16 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
   const [notice, setNotice] = useState<Notice>(null);
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const requestSeq = useRef(0);
+  // Automatically dismiss all notifications after 4 seconds
+useEffect(() => {
+  if (!notice) return;
+
+  const timer = window.setTimeout(() => {
+    setNotice(null);
+  }, 4000);
+
+  return () => window.clearTimeout(timer);
+}, [notice]);
 
   useEffect(() => { const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 250); return () => window.clearTimeout(timeout); }, [query]);
   useEffect(() => { setPage(1); }, [filter, category, debouncedQuery, sort]);
