@@ -1,21 +1,35 @@
 # 🍿 Snack Overflow
 
-> A production-minded office pantry tracker for Bipolar Factory's Full Stack Intern Round 2.
+> A full-stack office pantry tracker built for Bipolar Factory's Full Stack Intern — Round 2 assignment.
 
-**Built with:** React 18 · TypeScript · Vite · FastAPI · SQLAlchemy 2 · PostgreSQL 16 · Pytest · Docker Compose
+**Live demo:** [Open Snack Overflow](https://frontend-production-03621756.up.railway.app/) · **Source:** [GitHub repository](https://github.com/umarakeel04/snack-overflow) · **CI:** [GitHub Actions](https://github.com/umarakeel04/snack-overflow/actions)
 
-Snack Overflow helps a team discover snacks, vote for favourites, consume packets, and keep an accurate inventory. Admins can add, edit, restock, delete snacks, and review the audit log. Inventory is safe even when many people grab the last packet simultaneously.
+**Stack:** React 18 · TypeScript · Vite · FastAPI · SQLAlchemy 2 · PostgreSQL 16 · Docker Compose · Pytest · Ruff · ESLint · Railway
 
-## 🚀 Run it in a few minutes (recommended: Docker Desktop)
+Snack Overflow lets office members browse snacks, vote for favourites, and consume packets while maintaining accurate stock. Admins manage inventory, restock items, and inspect activity history. The core engineering requirement is enforced in PostgreSQL: even when ten people compete for the final three packets, stock cannot go negative.
 
-Prerequisites: [Docker Desktop](https://docs.docker.com/desktop/) with the Compose plugin installed, and Git.
+### Reviewer quick start
+
+1. **Try the hosted UI:** [Live demo](https://frontend-production-03621756.up.railway.app/). Reviewers can use credentials supplied **privately in the submission email**; public registration creates member accounts only.
+2. **Review the concurrency design:** [Atomic stock update](#-the-concurrency-guarantee) and [idempotent retries](#idempotent-consume-retries-bonus).
+3. **Verify quality:** [Tests and CI](#-testing-and-ci), [`scripts/smoke_http.py`](scripts/smoke_http.py), and [`scripts/smoke_idempotency.py`](scripts/smoke_idempotency.py).
+4. **Understand trade-offs:** [Design note](#-short-design-note-decisions-trade-offs-100-users), [real-time updates](#-real-time-pantry-updates-bonus), and [public deployment](#-public-deployment-live-demo-bonus).
+
+> **Public demo notice:** This is a time-boxed internship demonstration, not a production identity service. The hosted database is separate from local Docker data, and its admin/member credentials are never committed to Git.
+
+## 🚀 Run it locally with Docker Compose
+
+Prerequisites: [Docker Desktop](https://docs.docker.com/desktop/) with Compose enabled, and Git.
 
 ```bash
 git clone https://github.com/umarakeel04/snack-overflow.git
 cd snack-overflow
-cp .env.example .env            # Windows PowerShell: Copy-Item .env.example .env
+cp .env.example .env
+# On Windows PowerShell, use: Copy-Item .env.example .env
 docker compose up --build
 ```
+
+Use your own local database password in the gitignored `.env` file before starting the stack. The repository's sample accounts below are **local-only**. The hosted Railway application uses different, private credentials.
 
 Open:
 
@@ -34,11 +48,11 @@ The backend automatically creates tables and seeds demo data on container startu
 | Admin | `admin@snackoverflow.dev` | `Admin123!` | Everything, including management, restock, and activity |
 | Member | `member@snackoverflow.dev` | `Member123!` | Browse, search, consume, vote/unvote |
 
-**Important:** These fixed credentials are only for this local assignment demo. They must be replaced/disabled before any public deployment.
+**Important:** These passwords are intentionally **local-only**. They are not used on Railway. Public demo credentials are provisioned via the backend's private `DEMO_*` variables and shared with reviewers separately; do not put those passwords into this README or a screenshot.
 
 ### Run without Docker (optional)
 
-You need a PostgreSQL server/database accessible from your machine, Node.js 20+ and Python 3.11+. Configure the `DATABASE_URL` in `backend/.env` from `backend/.env.example` to point to that database.
+You need a PostgreSQL server/database accessible from your machine, Node.js 22+ (needed for the frontend's standalone TypeScript tests), and Python 3.11+. Configure `DATABASE_URL` in `backend/.env`, using `backend/.env.example` as a starting point. Use a development database, not your Railway database.
 
 Terminal A (API):
 
@@ -82,32 +96,58 @@ Open http://localhost:5173. The Vite dev server proxies `/api` to port `8000`; t
 | Error states | Consistent `{ "error": { "code", "message" } }` and validation details |
 | Tests | HTTP contract tests, 10-worker race, rollback test; optional real PostgreSQL race in CI |
 | Responsive UI | CSS grid cards, mobile-friendly filters, modal forms, feedback and empty states |
-| Optional features | Server-side sorting, member sign-up, admin activity page, Docker Compose, idempotency, optimistic Vote/Consume, GitHub Actions CI |
+| Member sign-up | `POST /auth/register` creates a member-only account with server-side role enforcement |
+| Optimistic UI | Immediate vote/consume previews; rollback and error feedback if the API rejects the operation |
+| Real-time synchronization | Authenticated SSE backed by PostgreSQL `LISTEN/NOTIFY` refreshes other open sessions |
+| Public demo | Railway hosting: public React/Nginx frontend, private FastAPI service, managed PostgreSQL |
+
+### All nine optional bonuses
+
+| Bonus | Implementation |
+| --- | --- |
+| Docker | One `docker compose up --build` starts database, API and UI |
+| Sign-up | Member registration via `/auth/register` |
+| Activity page | Admin-only, paginated activity history |
+| Optimistic UI | Immediate vote/consume previews with automatic rollback |
+| Real-time updates | Cross-tab stock and vote updates using PostgreSQL notifications + SSE |
+| Idempotency | `Idempotency-Key` prevents retried consumption from decrementing stock twice |
+| Sorting | Server-side sort by name, quantity or votes |
+| CI pipeline | Ruff, ESLint, type-check, frontend tests, backend tests including PostgreSQL |
+| Live demo | [Railway-hosted site](https://frontend-production-03621756.up.railway.app/) |
 
 ## 🧱 Architecture
 
 ```text
-                     ┌──────────────────────────────┐
-                     │ React 18 + TypeScript / Vite │
-                     │ Login / Dashboard / Admin UI │
-                     └──────────────┬───────────────┘
-                                    │ HTTPS /api (local proxy)
-                     ┌──────────────▼───────────────┐
-                     │ FastAPI REST application     │
-                     │ Pydantic request validation  │
-                     │ Session lookup + role guard  │
-                     │ Inventory services           │
-                     └──────────────┬───────────────┘
-                                    │ SQLAlchemy + transaction
-                     ┌──────────────▼───────────────┐
-                     │ PostgreSQL 16                │
-                     │ users / login_sessions       │
-                     │ snacks / votes / activities  │
-                     │ constraints + row locking    │
-                     └──────────────────────────────┘
+      Browser (member / admin)
+                 |
+       HTTPS (public Railway URL)
+                 |
+      React + TypeScript / Vite
+      Nginx (static UI and /api proxy)
+                 |
+    Private backend connection (Railway)
+                 |
+        FastAPI + Pydantic
+      Auth / role guards / REST
+      Atomic inventory transactions
+                 |
+       SQLAlchemy / PostgreSQL 16
+      users, sessions, snacks, votes,
+      activities, consume_idempotency
+                 |
+      PostgreSQL trigger on mutations
+                 |
+        LISTEN / NOTIFY --------------+
+                 |                     |
+        Authenticated SSE              |
+                 |                     |
+       Other open browser tabs <-------+
+        (refetch authoritative data)
 ```
 
-The frontend never writes directly to PostgreSQL. All reads/writes go through FastAPI, which authenticates, validates, checks authorization, and uses database transactions. The inventory service is deliberately small and testable.
+Locally, Docker Compose runs Nginx, FastAPI and PostgreSQL together. On Railway, only the frontend is public; Nginx proxies `/api` and the SSE stream to the private backend, which connects to private PostgreSQL.
+
+The frontend never writes directly to PostgreSQL. FastAPI handles validation, authentication, authorization and transactions. PostgreSQL notifications are **invalidation signals**, not a replacement for REST reads: connected clients re-fetch the authoritative list/summary after a committed mutation. The database remains the source of truth.
 
 ### Schema choices
 
@@ -203,6 +243,7 @@ All routes except `POST /auth/login`, `POST /auth/register`, and `GET /health` r
 | `POST` | `/snacks/{id}/vote` | Member/Admin | `201`; `409` if already voted |
 | `DELETE` | `/snacks/{id}/vote` | Member/Admin | Removes vote; `409` if not voted |
 | `GET` | `/activity` | Admin | Audit log, paginated |
+| `GET` | `/snacks/events` | Member/Admin | Authenticated SSE connection for pantry invalidation events |
 
 Allowed categories: `sweet`, `savoury`, `drink`, `healthy-ish`. Stock statuses: `stocked`, `running_low`, `gone`. Sort: `name`, `quantity`, `votes`; order: `asc` or `desc`. Default page size: 8, maximum: 50.
 
@@ -256,6 +297,8 @@ cd backend
 cd ..\frontend
 npm install          # Updates package-lock.json when lint dependencies change
 npm run lint
+npm run test:optimistic
+npm run test:realtime
 npm run build
 cd ..
 ```
@@ -275,6 +318,8 @@ Commit the updated `frontend/package-lock.json` after `npm install`, so GitHub A
 7. **10 simultaneous consumers competing for 3 items:** assert 3 success, 7 conflicts, final quantity 0 and exactly 3 activity entries.
 8. **Forced audit insert failure:** assert stock update rolled back.
 9. **PostgreSQL-specific parallel test:** same 10-person stock race **plus** 10 parallel votes by the same user (one succeeds).
+10. **Idempotency retry tests:** same-key concurrent requests execute once; different payloads conflict; rollback and replay are verified.
+11. **Registration, public configuration, and real-time tests:** validation, protected roles, secure public demo configuration, SSE formatting and PostgreSQL notifications.
 
 To run the fast tests from a local Python environment:
 
@@ -286,7 +331,7 @@ python -m pytest -q
 
 The PostgreSQL-only integration test is skipped unless `TEST_POSTGRES_URL` is present. To run **all** tests against an isolated PostgreSQL test database, set `TEST_POSTGRES_URL` to its connection URL and run the same command. **Use a separate test database** (for example `snackoverflow_test`).
 
-GitHub Actions `.github/workflows/ci.yml` starts a real PostgreSQL service for the backend tests and builds/type-checks the frontend on every push and pull request.
+GitHub Actions `.github/workflows/ci.yml` starts a real PostgreSQL service and runs backend lint/tests (including PostgreSQL contention cases), frontend lint, optimistic UI and SSE tests, type-checking, and the production build on every push and pull request. The final check is the repository's [Actions page](https://github.com/umarakeel04/snack-overflow/actions).
 
 ### Live HTTP concurrency demonstration (after Docker startup)
 
@@ -304,7 +349,7 @@ This standard-library-only script creates a disposable snack with three packets,
 - `POST /auth/register` accepts only `name`, `email`, and `password`. It never trusts a client-provided role; the server assigns `member` directly.
 - Passwords must have 8–128 characters and contain at least one letter and one number. Passwords are stored using the existing per-user salted scrypt hashing, not plaintext. Emails are normalized to lowercase before insertion.
 - The `users.email` unique constraint is the final concurrency-safe guard against duplicate accounts; conflicting sign-ups receive `409 EMAIL_ALREADY_REGISTERED`. Invalid requests use the existing `422` error contract.
-- There is no email verification, anti-bot challenge, password-reset flow, or registration rate limiting because this is a **local internship demonstration**, not a production identity service. These would be required before public deployment.
+- The public Railway URL is a **limited assignment demo**, not a hardened production identity service. There is no email verification, anti-bot challenge, password-reset flow, or registration rate limiting; a general public launch would require those protections and operational monitoring.
 - Tests in `backend/tests/test_registration.py` cover new member creation, hashed passwords, normalized duplicate emails, validation, server-enforced roles, and admin-route rejection. Run `pytest -q` using `backend/requirements-dev.txt`.
 
 ## 🧠 Short design note: decisions, trade-offs, 100× users
@@ -318,7 +363,10 @@ This standard-library-only script creates a disposable snack with three packets,
 5. **Audit log in the stock transaction** favors correctness over maximum throughput. Failed writes never leave phantom activity records.
 6. **Stock changes have dedicated endpoints** (no quantity changes in PATCH) to prevent bypassing the activity trail.
 7. **Derived status** avoids redundant storage. The summary endpoint aggregates directly in SQL so it cannot disagree with the list.
-8. **Database-backed idempotency for consume** prevents double-charging stock on client retries. The request key and result are committed with the inventory update and activity event.
+8. **Database-backed idempotency for consume** prevents double-decrementing stock on client retries. The request key and result are committed with the inventory update and activity event.
+9. **Optimistic React overlays** make vote and consume actions feel immediate, but rollback automatically if the server rejects them; server values always win.
+10. **PostgreSQL notifications + authenticated SSE** give cross-tab updates without duplicating write logic; clients refetch authoritative REST state.
+11. **Railway private networking** keeps the API and PostgreSQL off the public internet while the frontend remains reviewable over HTTPS.
 
 **Trade-offs / known limitations:**
 
@@ -326,15 +374,18 @@ This standard-library-only script creates a disposable snack with three packets,
 - Session tokens reside in `sessionStorage` for demonstration. A deployment would use HttpOnly/SameSite cookies, HTTPS, CSRF safeguards, session cleanup, and a login rate limiter.
 - Only restock and consume stock changes generate activity entries; new snack initial stock is part of creating the record. There is no edit/delete activity event (not required by the challenge).
 - The weekly winner is based on the preceding 7×24 hours, not a Monday–Sunday calendar window. A vote cast before that window is not counted; changing this definition would require product input.
-- No WebSocket/SSE, public demo deployment, or full end-to-end browser tests; correctness, authorization, and DB invariants took precedence. Consume idempotency is implemented, but receipt retention/cleanup is a documented production follow-up.
+- The app **does implement authenticated SSE** and has a **public Railway demo**; it does not yet have full automated end-to-end browser tests or production-grade availability/observability. SSE requires a persistent connection and reconnect logic; cross-instance fanout depends on PostgreSQL notifications.
+- Consume idempotency receipts do not yet have a cleanup policy; a production system should define a retention window and background cleanup.
+- The public sign-up flow has no email verification, password reset, rate limiting or bot protection. The Railway trial is usage-limited, so the demo may not remain online indefinitely.
 
 **What breaks first at 100× users?**
 
 - Repeated per-request SQL aggregation for vote totals, weekly winner, and dashboard summary, plus a DB lookup for every session. Profile these queries first; use the included `votes(snack_id, created_at)` index, then add targeted caching with careful invalidation, and connection pooling.
 - Hot snack rows experience increased row-lock contention. The conditional UPDATE remains correct, but latency rises on very popular snacks. Measure conflict rates, DB lock waits, p95 latency, and consider a queue for extremely hot items if product requirements justify it.
 - A single small PostgreSQL instance becomes the capacity bottleneck. Scale reads where appropriate, handle migrations, centralize metrics/tracing, add backups, and use managed database resources.
+- Thousands of persistent SSE connections increase backend memory, connection and reconnection load. Consider a dedicated event gateway or managed pub/sub for high-volume fanout; continue to treat the database and REST endpoints as authoritative.
 
-**Why keep other bonuses limited?** The assignment says depth beats breadth. The central proof is *3 successes, 7 conflicts, 0 negative inventory, 3 audit entries* under a real database race. Member sign-up, consume idempotency and optimistic previews were added only after the atomic inventory, vote uniqueness, authentication, and CI checks were working. Live updates and cosmetic animations would not improve those invariants.
+**Why this order of implementation?** The assignment says depth beats breadth. The central proof is *3 successful consumes, 7 conflicts, no negative stock, and 3 activity entries* under a real database race. Sign-up, idempotency, optimistic UI, live updates and deployment came after the atomic stock, vote uniqueness, authentication and CI checks were working. These bonuses improve usability and reviewability, but do not replace the core correctness guarantees.
 
 For the implementation steps and demo script, see [`docs/IDEMPOTENCY_BONUS_GUIDE.md`](docs/IDEMPOTENCY_BONUS_GUIDE.md).
 
@@ -347,7 +398,24 @@ Vote/Unvote and Consume update the **visible snack card immediately** without wa
 - **Stale reads:** Keeping previews in separate overlays stops unrelated in-flight GET requests from overwriting the temporary display or causing a stale-snapshot rollback.
 - **Consume retries:** The dialog retains the same `Idempotency-Key` for retries of the same amount; changing the amount gets a new key, so the server still protects against double-consumption.
 
-The summary cards and weekly leader remain server-authoritative and refresh **after confirmation**; we intentionally do not fabricate those aggregated totals during a pending request. This implementation does not include WebSockets/SSE or background synchronization between tabs. Run the standalone projection tests with **Node.js 22+**: `cd frontend && npm run test:optimistic`. See [`docs/OPTIMISTIC_UI_GUIDE.md`](docs/OPTIMISTIC_UI_GUIDE.md) for manual failure/rollback verification.
+The summary cards and weekly leader remain server-authoritative and refresh **after confirmation**; we intentionally do not fabricate those aggregated totals during a pending request. **SSE additionally refreshes other open tabs** after committed changes. Run the standalone projection tests with **Node.js 22+**: `cd frontend && npm run test:optimistic`. See [`docs/OPTIMISTIC_UI_GUIDE.md`](docs/OPTIMISTIC_UI_GUIDE.md) for manual failure/rollback verification.
+
+## 🔴 Real-time pantry updates (bonus)
+
+PostgreSQL `LISTEN/NOTIFY` now pushes invalidation events to authenticated Server-Sent Events clients at `GET /snacks/events`. The backend seed installs statement-level triggers on `snacks` and `votes` during startup. Notifications arrive **after commit**, so rolled-back changes never appear. The React dashboard refreshes snack counts, the weekly winner, and activity history automatically across open tabs, while preserving pending optimistic UI overlays. The UI shows **Live sync** when connected and reconnects automatically after interruptions.
+
+This uses a streaming `fetch` with the existing Bearer token in the request **header**, never in a URL. Nginx disables buffering for the SSE endpoint. Test with two tabs (vote or consume in one, watch the other without pressing Refresh). See [`docs/REALTIME_BONUS_GUIDE.md`](docs/REALTIME_BONUS_GUIDE.md) for verification, limitations and 100× scaling trade-offs.
+
+
+## ☁️ Public deployment (live demo bonus)
+
+**Public URL:** https://frontend-production-03621756.up.railway.app/
+
+The Railway deployment uses **private** PostgreSQL and FastAPI services plus a **public** Nginx/React frontend. Nginx proxies `/api` and authenticated `/api/snacks/events` to the internal backend. Hosted credentials are configured privately as Railway variables (`PUBLIC_DEMO_MODE`, `DEMO_ADMIN_EMAIL`, `DEMO_ADMIN_PASSWORD`, `DEMO_MEMBER_EMAIL`, `DEMO_MEMBER_PASSWORD`); local demo passwords must not be used in public hosting. The backend's seed creates accounts only when missing, so changing an environment password does **not** automatically reset an existing user's database password hash.
+
+**Reviewer access:** Admin/member sign-in details are sent privately with the submission. Public sign-up is restricted to the **member** role. Do not add Railway variable values or credentials to the repository.
+
+The hosted demo depends on Railway trial resources and may become unavailable after the trial credit or usage allowance is exhausted. See [`docs/RAILWAY_DEPLOYMENT_GUIDE.md`](docs/RAILWAY_DEPLOYMENT_GUIDE.md) for deployment, limitations and testing.
 
 ## 📂 Project structure
 
@@ -361,17 +429,21 @@ snack-overflow/
 │   │   ├── App.tsx          # Login, dashboard, role-aware controls, activity, dialogs
 │   │   ├── api.ts           # Typed API client and unified errors
 │   │   ├── optimistic.ts    # Optimistic stock/vote previews and rollback overlays
+│   │   ├── realtime.ts      # Authenticated SSE subscription and reconnect logic
 │   │   ├── types.ts         # API response and input types
 │   │   └── styles.css       # Responsive styling
-│   ├── tests/optimistic.test.mjs  # Four UI projection tests (Node.js 22+)
+│   ├── tests/
+│   │   ├── optimistic.test.mjs   # Optimistic UI projection tests
+│   │   └── realtime.test.mjs     # SSE parser tests
 │   ├── Dockerfile
-│   ├── nginx.conf           # Proxy /api to FastAPI
+│   ├── nginx.conf.template  # Nginx API + SSE proxy (local and Railway)
 │   └── package.json
 ├── backend/
 │   ├── app/
 │   │   ├── main.py          # Routes, filters, auth guards, errors
 │   │   ├── services.py      # Atomic inventory and audit transactions
 │   │   ├── idempotency.py   # DB-backed consume idempotency and response replay
+│   │   ├── realtime.py      # PostgreSQL LISTEN/NOTIFY and SSE helpers
 │   │   ├── models.py        # SQLAlchemy tables and constraints
 │   │   ├── security.py      # Scrypt passwords + sessions + role dependency
 │   │   ├── schemas.py       # Pydantic validation and API contract
@@ -382,8 +454,11 @@ snack-overflow/
 │   │   ├── test_api.py
 │   │   ├── test_concurrency.py
 │   │   ├── test_registration.py
-│   │   └── test_idempotency.py
+│   │   ├── test_idempotency.py
+│   │   ├── test_realtime.py
+│   │   └── test_public_deployment.py
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   └── Dockerfile
 ├── scripts/
 │   ├── smoke_http.py          # Live 10-request HTTP race and permissions smoke test
@@ -392,7 +467,9 @@ snack-overflow/
     ├── DEMO_AND_SUBMISSION.md
     ├── SIGNUP_BONUS_GUIDE.md
     ├── IDEMPOTENCY_BONUS_GUIDE.md
-    └── OPTIMISTIC_UI_GUIDE.md
+    ├── OPTIMISTIC_UI_GUIDE.md
+    ├── REALTIME_BONUS_GUIDE.md
+    └── RAILWAY_DEPLOYMENT_GUIDE.md
 ```
 
 ## ✉️ Submission
@@ -400,24 +477,12 @@ snack-overflow/
 Submit to `torsha@bipolarfactory.com` with subject `Round 2 – Full Stack Intern – Umar Akeel V M` by **Monday, 16 November 2026, 11:00 AM IST** (as confirmed in the recruitment email). Include:
 
 - Link to a **public GitHub repository** with meaningful commit history.
-- This README, including demo credentials, API details, concurrency and authorization approach, and design note.
+- This README, including local setup instructions, API details, concurrency and authorization approach, and design note.
 - **Your own 3–5 minute screen recording**, demonstrating both accounts, common actions, error handling, and the crucial atomic SQL/test code.
-- Live deployment URL only if you have safely configured and tested a deployment (optional).
+- The [live Railway demo](https://frontend-production-03621756.up.railway.app/) and **private reviewer credentials** for the hosted Admin and Member accounts (not in GitHub or the recording).
 
 See `docs/DEMO_AND_SUBMISSION.md` for a concrete submission checklist and recording outline.
 
 ---
 
 *Built as an engineering assignment. The most important feature is not how many packets appear in the UI; it is that the database never tells two people the same last packet belongs to them.*
-
-
-## 🔴 Real-time pantry updates (bonus)
-
-PostgreSQL `LISTEN/NOTIFY` now pushes invalidation events to authenticated Server-Sent Events clients at `GET /snacks/events`. The backend seed installs statement-level triggers on `snacks` and `votes` during startup. Notifications arrive **after commit**, so rolled-back changes never appear. The React dashboard refreshes snack counts, the weekly winner, and activity history automatically across open tabs, while preserving pending optimistic UI overlays. The UI shows **Live sync** when connected and reconnects automatically after interruptions.
-
-This uses a streaming `fetch` with the existing Bearer token in the request **header**, never in a URL. Nginx disables buffering for the SSE endpoint. Test with two tabs (vote or consume in one, watch the other without pressing Refresh). See [`docs/REALTIME_BONUS_GUIDE.md`](docs/REALTIME_BONUS_GUIDE.md) for verification, limitations and 100× scaling trade-offs.
-
-
-## ☁️ Public deployment (optional bonus)
-
-The Railway deployment uses **private** PostgreSQL + FastAPI services and a **public** Nginx/React frontend. Nginx proxies `/api` and authenticated `/api/snacks/events` to the internal backend. Production demo credentials must be generated privately as Railway variables; local demo passwords are **not suitable for public hosting**. See [`docs/RAILWAY_DEPLOYMENT_GUIDE.md`](docs/RAILWAY_DEPLOYMENT_GUIDE.md) for deployment, limitations, and testing.
