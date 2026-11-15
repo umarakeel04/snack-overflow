@@ -16,6 +16,15 @@ const blankForm: SnackForm = { name: '', category: 'savoury', quantity: 0, low_s
 
 function stockLabel(stock: StockStatus) { return <span className={`status status-${stock}`}><i />{label[stock]}</span>; }
 function messageOf(err: unknown): string { return err instanceof Error ? err.message : 'Something went wrong. Please try again.'; }
+// Keep the draft value as text so Backspace can leave an input genuinely empty.
+// Validate and convert to a number only when the user submits the form.
+function parseWholeNumber(raw: string, label: string, min: number, max: number): number {
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${label} must be a whole number between ${min} and ${max}.`);
+  }
+  return value;
+}
 function formatDate(value: string) { return new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
 function markIcon(kind: string) {
   const icons: Record<string, string> = { box: '▦', low: '◔', gone: '○', total: '◫', star: '★' };
@@ -116,7 +125,9 @@ function DialogShell({ title, subtitle, children, onClose }: { title: string; su
 function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>; onClose: () => void; onSave: (dialog: NonNullable<Dialog>, values?: SnackForm | number, requestKey?: string) => Promise<void> }) {
   const initial = dialog.kind === 'edit' ? { name: dialog.snack.name, category: dialog.snack.category, quantity: dialog.snack.quantity, low_stock_threshold: dialog.snack.low_stock_threshold } : blankForm;
   const [form, setForm] = useState<SnackForm>(initial);
-  const [amount, setAmount] = useState(1);
+  const [quantityText, setQuantityText] = useState(String(initial.quantity));
+  const [thresholdText, setThresholdText] = useState(String(initial.low_stock_threshold));
+  const [amountText, setAmountText] = useState('1');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   // Keep this key across retries of the SAME dialog/amount after network errors.
@@ -127,8 +138,24 @@ function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>;
   const subtitle = dialog.kind === 'add' ? 'Give the team something new to look forward to.' : dialog.kind === 'edit' ? `Update details for ${dialog.snack.name}.` : dialog.kind === 'consume' ? `There are ${dialog.snack.quantity} × ${dialog.snack.name} available right now.` : dialog.kind === 'restock' ? `Add more ${dialog.snack.name} to your inventory.` : `This permanently removes ${dialog.snack.name} from the pantry. Past activity is preserved.`;
   async function submit(e: FormEvent) {
     e.preventDefault();
+    let values: SnackForm | number | undefined;
+    try {
+      if (isForm) {
+        values = {
+          ...form,
+          quantity: dialog.kind === 'add' ? parseWholeNumber(quantityText, 'Starting quantity', 0, 1000000) : form.quantity,
+          low_stock_threshold: parseWholeNumber(thresholdText, 'Low-stock alert threshold', 0, 1000000),
+        };
+      } else if (dialog.kind !== 'delete') {
+        const max = dialog.kind === 'consume' ? Math.max(dialog.snack.quantity, 1) : 1000000;
+        values = parseWholeNumber(amountText, 'Number of packets', 1, max);
+      }
+    } catch (err) {
+      setError(messageOf(err));
+      return;
+    }
     setSaving(true); setError('');
-    try { await onSave(dialog, isForm ? form : amount, dialog.kind === 'consume' ? consumeRequestKey.current : undefined); onClose(); }
+    try { await onSave(dialog, values, dialog.kind === 'consume' ? consumeRequestKey.current : undefined); onClose(); }
     catch (err) { setError(messageOf(err)); }
     finally { setSaving(false); }
   }
@@ -139,13 +166,13 @@ function SnackDialog({ dialog, onClose, onSave }: { dialog: NonNullable<Dialog>;
         <input id="snack-name" value={form.name} maxLength={120} required onChange={e => change('name', e.target.value)} placeholder="e.g. Salted caramel popcorn" autoFocus />
         <label className="form-label" htmlFor="snack-category">Category</label>
         <select id="snack-category" value={form.category} onChange={e => change('category', e.target.value)}><option value="sweet">🍪 Sweet</option><option value="savoury">🥨 Savoury</option><option value="drink">🧃 Drink</option><option value="healthy-ish">🥜 Healthy-ish</option></select>
-        {dialog.kind === 'add' && <><label className="form-label" htmlFor="snack-quantity">Starting quantity</label><input id="snack-quantity" type="number" min="0" max="1000000" required value={form.quantity} onChange={e => change('quantity', Number(e.target.value))} /></>}
+        {dialog.kind === 'add' && <><label className="form-label" htmlFor="snack-quantity">Starting quantity</label><input id="snack-quantity" type="number" min="0" max="1000000" step="1" required value={quantityText} onChange={e => setQuantityText(e.target.value)} /></>}
         <label className="form-label" htmlFor="snack-threshold">Low-stock alert threshold</label>
-        <input id="snack-threshold" type="number" min="0" max="1000000" required value={form.low_stock_threshold} onChange={e => change('low_stock_threshold', Number(e.target.value))} />
+        <input id="snack-threshold" type="number" min="0" max="1000000" step="1" required value={thresholdText} onChange={e => setThresholdText(e.target.value)} />
         {dialog.kind === 'edit' && <p className="helper">Stock quantity is adjusted using Consume / Restock so changes are audited.</p>}
       </> : dialog.kind === 'delete' ? <div className="delete-alert">⚠️ This action cannot be undone.</div> : <>
         <label className="form-label" htmlFor="amount">Number of packets</label>
-        <input id="amount" type="number" min="1" max={dialog.kind === 'consume' ? Math.max(dialog.snack.quantity, 1) : 1000000} required value={amount} onChange={e => { setAmount(Number(e.target.value)); if (dialog.kind === 'consume') consumeRequestKey.current = crypto.randomUUID(); }} autoFocus />
+        <input id="amount" type="number" min="1" max={dialog.kind === 'consume' ? Math.max(dialog.snack.quantity, 1) : 1000000} step="1" required value={amountText} onChange={e => { setAmountText(e.target.value); if (dialog.kind === 'consume') consumeRequestKey.current = crypto.randomUUID(); }} autoFocus />
         {dialog.kind === 'consume' && <p className="helper">Inventory is checked again by the server when you confirm.</p>}
       </>}
       {error && <div className="inline-error" role="alert">⚠ {error}</div>}
