@@ -39,11 +39,13 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const registering = mode === 'register';
 
   function changeMode(next: 'login' | 'register') {
     setMode(next);
     setError('');
+    setSuccess('');
     setName('');
     setEmail(next === 'login' && !publicDeployment ? 'member@snackoverflow.dev' : '');
     setPassword(next === 'login' && !publicDeployment ? 'Member123!' : '');
@@ -53,16 +55,24 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    setSuccess('');
     if (registering && password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
     }
     setLoading(true);
     try {
-      const data = registering
-        ? await api.register(name.trim(), email.trim(), password)
-        : await api.login(email.trim(), password);
-      onLogin(data.token, data.user);
+      if (registering) {
+        await api.register(name.trim(), email.trim(), password);
+        setMode('login');
+        setName('');
+        setPassword('');
+        setConfirmPassword('');
+        setSuccess('Account created successfully. Please sign in to continue.');
+      } else {
+        const data = await api.login(email.trim(), password);
+        onLogin(data.token, data.user);
+      }
     } catch (err) {
       setError(messageOf(err));
     } finally {
@@ -101,6 +111,7 @@ function Login({ onLogin }: { onLogin: (token: string, user: User) => void }) {
           <input id="confirm-password" type="password" autoComplete="new-password" required value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
         </>}
         {error && <div className="inline-error" role="alert">⚠ {error}</div>}
+        {success && <div className="inline-success" role="status">✓ {success}</div>}
         <button className="primary login-submit" type="submit" disabled={loading}>{loading ? (registering ? 'Creating account…' : 'Signing in…') : (registering ? 'Create member account →' : 'Sign in to pantry →')}</button>
       </form>
       <p className="auth-switch">{registering ? 'Already have an account?' : 'New to Snack Overflow?'}{' '}

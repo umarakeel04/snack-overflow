@@ -22,6 +22,7 @@ input::placeholder { color: #a4aeb9; }
 .form-label { display: block; font-weight: 750; font-size: .81rem; margin: 17px 0 7px; color: #364057; }
 .helper { font-size: .78rem; color: #8b94a4; line-height: 1.6; margin: 9px 0; }
 .inline-error { color: #ab3343; background: #fff0f1; border: 1px solid #ffd6d8; border-radius: 9px; padding: 12px; margin: 13px 0; font-size: .85rem; }
+.inline-success { color: #17613a; background: #eaf9ef; border: 1px solid #b9e4c6; border-radius: 9px; padding: 12px; margin: 13px 0; font-size: .85rem; }
 .boot-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; gap: 12px; font-weight: 800; color: #253052; }
 /* Login */
 .login-page { display: grid; grid-template-columns: 1.1fr .9fr; min-height: 100vh; background: #fff; }

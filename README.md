@@ -345,7 +345,7 @@ This standard-library-only script creates a disposable snack with three packets,
 
 ## 🍿 Bonus: member sign-up
 
-- The login screen now includes **Create an account**, with name, email, password, and password confirmation. After successful sign-up, the newly created member is signed in automatically.
+- The login screen now includes **Create an account**, with name, email, password, and password confirmation. After successful sign-up, the app returns to the sign-in form and asks the member to log in. The registration API currently returns a token for compatibility, but the UI does not store or use it.
 - `POST /auth/register` accepts only `name`, `email`, and `password`. It never trusts a client-provided role; the server assigns `member` directly.
 - Passwords must have 8–128 characters and contain at least one letter and one number. Passwords are stored using the existing per-user salted scrypt hashing, not plaintext. Emails are normalized to lowercase before insertion.
 - The `users.email` unique constraint is the final concurrency-safe guard against duplicate accounts; conflicting sign-ups receive `409 EMAIL_ALREADY_REGISTERED`. Invalid requests use the existing `422` error contract.
