@@ -109,3 +109,70 @@ input::placeholder { color: #a4aeb9; }
 .live-pill { font-size: .72rem; font-weight: 750; color: #8895ab; white-space: nowrap; }
 .live-pill.connected { color: #208263; }
 @media (max-width: 660px) { .live-pill { display: none; } }
+
+
+/* MOBILE SIDEBAR DRAWER FIX: preserve desktop sidebar; use an accessible drawer on phones. */
+.mobile-menu-button, .sidebar-close, .mobile-menu-backdrop { display: none; }
+
+@media (max-width: 660px) {
+  .app-shell { min-width: 0; }
+  .topbar { justify-content: flex-start; gap: 8px; }
+  .topbar-brand { margin-right: auto; font-size: .75rem; letter-spacing: .02em; }
+  .topbar-right { gap: 6px; }
+  .topbar-logout { display: none; } /* Sign out stays available in the drawer. */
+  .role-pill { font-size: .65rem; padding: 7px 9px; }
+  .mobile-nav { display: none; } /* Replaced with the full sidebar drawer. */
+  .mobile-menu-button {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 42px; height: 42px; flex-shrink: 0;
+    border: 1px solid #e2e5ea; border-radius: 10px;
+    background: #fff; color: #27314e; font-size: 1.4rem;
+  }
+  .mobile-menu-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 100;
+    width: 100%; height: 100%; border: 0; border-radius: 0;
+    background: rgba(14, 23, 43, .55);
+  }
+  .sidebar {
+    display: flex; visibility: hidden; pointer-events: none;
+    position: fixed; top: 0; left: 0; right: auto; bottom: 0;
+    z-index: 101; width: min(300px, 85vw);
+    height: 100vh; height: 100dvh; max-height: 100dvh; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding: 27px 16px 18px; align-items: stretch;
+    transform: translateX(-105%);
+    transition: transform .22s ease, visibility .22s ease;
+    box-shadow: 10px 0 35px rgba(6, 15, 37, .2);
+  }
+  .sidebar.mobile-open { visibility: visible; pointer-events: auto; transform: translateX(0); }
+  .sidebar-close {
+    display: grid; place-items: center; position: absolute;
+    top: 15px; right: 12px; width: 42px; height: 42px;
+    border: 1px solid #44516e; border-radius: 10px;
+    background: #2d3a5a; color: #fff; font-size: 1.5rem;
+  }
+  .sidebar-brand { padding: 0 12px 29px; }
+  .sidebar-brand .brand-description, .side-heading, .sidebar-note,
+  .sidebar-profile > div:nth-child(2) { display: block; }
+  .sidebar nav { width: 100%; }
+  .nav-item { justify-content: flex-start; font-size: .83rem; padding: 14px 13px; }
+  .nav-item span { font-size: 1.3rem; }
+  .sidebar-profile { flex-direction: row; }
+  .sidebar-profile button { min-width: 40px; min-height: 40px; }
+  .main-panel { min-width: 0; }
+}
+
+@media (max-width: 380px) {
+  .topbar-brand { font-size: .7rem; }
+  .welcome-row { flex-wrap: wrap; }
+  .add-button { margin-top: 0; }
+  .feature-strip { gap: 8px; padding: 12px 10px; }
+  .feature-medal { width: 40px; height: 40px; font-size: 1.5rem; }
+  .feature-strip > div:nth-child(2) { min-width: 0; }
+  .feature-right { min-width: 42px; }
+  .pagination, .snack-card-actions { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+}

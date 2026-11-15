@@ -191,6 +191,10 @@ function ActivityView({ token, liveTick }: { token: string; liveTick: number }) 
 function Dashboard({ user, token, onLogout }: { user: User; token: string; onLogout: () => void }) {
   const isAdmin = user.role === 'admin';
   const [view, setView] = useState<View>('pantry');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileMenuCloseRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [snacks, setSnacks] = useState<SnackPage | null>(null);
   const [loading, setLoading] = useState(true);
@@ -206,6 +210,35 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
   const [busyIds, setBusyIds] = useState<Set<number>>(new Set());
   const [liveTick, setLiveTick] = useState(0);
   const [liveConnected, setLiveConnected] = useState(false);
+  // Keep the mobile menu accessible and prevent scrolling behind the drawer.
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    mobileMenuCloseRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false);
+        mobileMenuButtonRef.current?.focus();
+      }
+      if (event.key === 'Tab') {
+        const buttons = sidebarRef.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])');
+        if (!buttons?.length) return;
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    const onResize = () => { if (window.innerWidth > 660) setMobileMenuOpen(false); };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [mobileMenuOpen]);
   // Pending previews are overlays, not changes to the server's cached data.
   // This keeps rollback correct even if an unrelated reload finishes mid-flight.
   const [optimisticSnacks, setOptimisticSnacks] = useState<ReadonlyMap<number, Snack>>(() => new Map());
@@ -333,18 +366,17 @@ function Dashboard({ user, token, onLogout }: { user: User; token: string; onLog
     } catch { /* Error notification and rollback handled by optimisticAction. */ }
   }
   return <div className="app-shell">
-    <aside className="sidebar"><div className="sidebar-brand"><div className="brand-logo">bpf<span>.</span></div><span className="brand-description">SNACK OVERFLOW</span></div>
+    {mobileMenuOpen && <button type="button" className="mobile-menu-backdrop" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)} />}
+    <aside ref={sidebarRef} id="primary-sidebar" className={`sidebar ${mobileMenuOpen ? 'mobile-open' : ''}`} aria-label="Primary sidebar" role={mobileMenuOpen ? 'dialog' : undefined} aria-modal={mobileMenuOpen ? true : undefined}>
+      <button ref={mobileMenuCloseRef} type="button" className="sidebar-close" onClick={() => { setMobileMenuOpen(false); mobileMenuButtonRef.current?.focus(); }} aria-label="Close navigation menu">×</button>
+      <div className="sidebar-brand"><div className="brand-logo">bpf<span>.</span></div><span className="brand-description">SNACK OVERFLOW</span></div>
       <div className="side-heading">WORKSPACE</div>
-      <nav aria-label="Primary navigation"><button onClick={() => setView('pantry')} className={`nav-item ${view === 'pantry' ? 'active' : ''}`}><span>▦</span> Pantry dashboard</button>
-        {isAdmin && <button onClick={() => setView('activity')} className={`nav-item ${view === 'activity' ? 'active' : ''}`}><span>◷</span> Activity history</button>}
+      <nav aria-label="Primary navigation"><button type="button" onClick={() => { setView('pantry'); setMobileMenuOpen(false); }} className={`nav-item ${view === 'pantry' ? 'active' : ''}`}><span>▦</span> Pantry dashboard</button>
+        {isAdmin && <button type="button" onClick={() => { setView('activity'); setMobileMenuOpen(false); }} className={`nav-item ${view === 'activity' ? 'active' : ''}`}><span>◷</span> Activity history</button>}
       </nav>
       <div className="sidebar-bottom"><div className="sidebar-note"><span>✦ PANTRY TIP</span><p>Check what’s running low before you grab your afternoon pick-me-up.</p></div><div className="sidebar-profile"><div className="avatar">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><small>{isAdmin ? 'Pantry administrator' : 'Team member'}</small></div><button title="Sign out" aria-label="Sign out" onClick={onLogout}>↪</button></div></div>
     </aside>
-    <div className="main-panel"><header className="topbar"><div className="topbar-brand">SNACK <span>OVERFLOW</span></div><div className="topbar-right"><span className={`live-pill ${liveConnected ? 'connected' : ''}`} title="Pantry updates across open tabs">{liveConnected ? '● Live sync' : '◌ Connecting…'}</span><span className="role-pill">{isAdmin ? '⚙ Admin' : '✦ Member'}</span><button className="topbar-logout" onClick={onLogout}>Sign out ↗</button></div></header>
-      <nav className="mobile-nav" aria-label="Mobile navigation">
-        <button type="button" className={view === 'pantry' ? 'active' : ''} onClick={() => setView('pantry')}>▦ Pantry</button>
-        {isAdmin && <button type="button" className={view === 'activity' ? 'active' : ''} onClick={() => setView('activity')}>◷ Activity</button>}
-      </nav>
+    <div className="main-panel"><header className="topbar"><button ref={mobileMenuButtonRef} type="button" className="mobile-menu-button" aria-label="Open navigation menu" aria-expanded={mobileMenuOpen} aria-controls="primary-sidebar" onClick={() => setMobileMenuOpen(true)}>☰</button><div className="topbar-brand">SNACK <span>OVERFLOW</span></div><div className="topbar-right"><span className={`live-pill ${liveConnected ? 'connected' : ''}`} title="Pantry updates across open tabs">{liveConnected ? '● Live sync' : '◌ Connecting…'}</span><span className="role-pill">{isAdmin ? '⚙ Admin' : '✦ Member'}</span><button className="topbar-logout" onClick={onLogout}>Sign out ↗</button></div></header>
       <main className="main-content">{view === 'activity' && isAdmin ? <ActivityView token={token} liveTick={liveTick}/> : <>
         <div className="welcome-row"><div><p className="eyebrow">WELCOME TO THE PANTRY 👋</p><h1>Hey, {user.name.split(' ')[0]}<span className="period">.</span> Hungry?</h1><p className="muted">Here's what's happening in the office pantry today.</p></div>{isAdmin && <button className="primary add-button" onClick={() => setDialog({ kind: 'add' })}>+ &nbsp; Add a snack</button>}</div>
         <section className="summary-metrics" aria-label="Pantry summary"><Metric caption="Total snacks" value={summary?.total ?? 0} kind="total" tone="blue"/><Metric caption="In stock" value={summary?.stocked ?? 0} kind="box" tone="green"/><Metric caption="Running low" value={summary?.running_low ?? 0} kind="low" tone="amber"/><Metric caption="Out of stock" value={summary?.gone ?? 0} kind="gone" tone="red"/></section>
